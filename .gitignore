@@ -1,0 +1,45 @@
+# Segredos e ambiente
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Testes / ferramentas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Django
+staticfiles/
+media/
+*.sqlite3
+*.log
+
+# Dumps e mídias de usuários
+*.dump
+*.sql.gz
+backups/
+
+# Editores / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Configurações locais de agents
+.claude/settings.local.json
