@@ -165,3 +165,8 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-06 — Exatamente um ADMIN por família (unique parcial no banco + service/admin) — regra simples e verificável.
 - 2026-10-06 — Admin de transações é somente leitura — dados financeiros só mudam pelos services e pelo dono.
 - 2026-10-06 — Catálogo inicial por management command idempotente, não data migration — administrador pode alterar o catálogo livremente.
+- 2026-10-06 — Cliente Evolution com `urllib` da stdlib, sem dependência HTTP nova — poucas chamadas JSON; timeout e erros tratados explicitamente.
+- 2026-10-06 — Webhook autenticado por header `X-Webhook-Secret` (suportado em `webhook.headers` na Evolution 2.3.7), nunca segredo na URL.
+- 2026-10-06 — Remetente desconhecido não é criado nem recebe resposta — evita spam/enumeração; cadastro via Admin.
+- 2026-10-06 — Payload bruto do webhook não é persistido; texto só para mensagens `READY` — minimiza dados sensíveis.
+- 2026-10-06 — Erro após a reserva idempotente responde `200` e marca `FAILED` — retry da Evolution seria no-op; reprocessamento manual.

@@ -1,6 +1,6 @@
 # Roadmap
 
-Versão atual: **V1.0 em andamento** — núcleo do domínio financeiro entregue; faltam WhatsApp e IA.
+Versão atual: **V1.0 em andamento** — domínio financeiro e transporte WhatsApp entregues; falta IA + pipeline textual.
 
 Regra: implementar somente a versão corrente. Itens de versões futuras só influenciam
 o desenho quando registrado aqui (ex.: estrutura de família desde a V1.0).
@@ -16,12 +16,13 @@ Ao concluir uma versão, atualizar a linha "Versão atual" e o `CHANGELOG.md`.
 - [x] `families`: models, services, policy de visibilidade e Admin (sem funcionalidade no canal).
 - [x] `transactions`: criação de despesas e receitas, soft delete; selectors determinísticos
   (período, total, por categoria, top despesas).
-- [ ] `whatsapp`: webhook Evolution autenticado, `InboundMessage`, idempotência do webhook,
-  identificação por telefone, envio de respostas.
+- [x] `whatsapp` (transporte): webhook Evolution autenticado, `InboundMessage`, idempotência,
+  filtros (fromMe/grupo/mídia), identificação por telefone, client de envio, comandos operacionais.
+- [ ] `whatsapp` (pipeline): ligar `READY` → IA → services financeiros → resposta.
 - [ ] `ai`: interpretação textual estruturada (`CREATE_TRANSACTION`, `QUERY_TRANSACTIONS`,
   `HELP`, `UNKNOWN`).
 - [x] Django Admin para usuários, famílias, categorias e transações.
-- [ ] Django Admin para mensagens (com o app `whatsapp`).
+- [x] Django Admin para mensagens (somente leitura).
 
 Pronto quando: "10 reais de gasolina" cria transação correta e "quanto gastei de transporte
 esse mês?" retorna o total correto, ambos ponta a ponta via WhatsApp, com testes cobrindo

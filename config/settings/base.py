@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     "apps.families",
     "apps.categories",
     "apps.transactions",
+    "apps.whatsapp",
 ]
 
 MIDDLEWARE = [
@@ -146,6 +147,21 @@ DB_ENABLE_RLS = env_bool("DB_ENABLE_RLS", default=True)
 # --- Domain ------------------------------------------------------------------
 
 TRANSACTION_MAX_AMOUNT = Decimal(env("TRANSACTION_MAX_AMOUNT", "1000000.00"))
+
+# --- WhatsApp / Evolution API --------------------------------------------------
+# Read here, validated where used (apps.whatsapp.conf): missing values fail clearly only
+# when an operation needs them. See docs/WHATSAPP.md.
+
+EVOLUTION_API_BASE_URL = env("EVOLUTION_API_BASE_URL")
+EVOLUTION_API_KEY = env("EVOLUTION_API_KEY")
+EVOLUTION_INSTANCE_NAME = env("EVOLUTION_INSTANCE_NAME")
+EVOLUTION_WEBHOOK_SECRET = env("EVOLUTION_WEBHOOK_SECRET")
+EVOLUTION_TIMEOUT_SECONDS = env("EVOLUTION_TIMEOUT_SECONDS")
+
+# Development-only technical acknowledgement ("Mensagem recebida.") for READY messages.
+WHATSAPP_DEV_ECHO = env_bool("WHATSAPP_DEV_ECHO", default=False)
+if IS_PRODUCTION and WHATSAPP_DEV_ECHO:
+    raise ImproperlyConfigured("WHATSAPP_DEV_ECHO cannot be enabled when DJANGO_ENV=production.")
 
 # --- Security ----------------------------------------------------------------
 

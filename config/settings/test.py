@@ -45,3 +45,11 @@ DATABASES = {"default": _test_db}
 
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 TRANSACTION_MAX_AMOUNT = Decimal("1000000.00")  # noqa: F405
+
+# Fixed fake Evolution configuration: tests never depend on .env nor reach the real API.
+EVOLUTION_API_BASE_URL = "http://evolution.test"
+EVOLUTION_API_KEY = "test-evolution-api-key"
+EVOLUTION_INSTANCE_NAME = "test-instance"
+EVOLUTION_WEBHOOK_SECRET = "test-webhook-secret"
+EVOLUTION_TIMEOUT_SECONDS = "5"
+WHATSAPP_DEV_ECHO = False

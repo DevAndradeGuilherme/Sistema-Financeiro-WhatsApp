@@ -70,6 +70,10 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
 - Constraint de `idempotency_key` impede duplicata mesmo chamando o service direto 2x.
 
 ### Webhook
+- Rede real bloqueada em toda a suíte (fixture autouse em `conftest.py`); Evolution
+  sempre mockada (`unittest.mock` em `apps.whatsapp.client.urlopen`).
+- Payloads de referência da Evolution 2.3.7 em `apps/whatsapp/tests/payloads.py`.
+- Concorrência de idempotência: duas threads com conexões próprias (`transaction=True`).
 - Sem segredo / segredo errado → rejeitado sem efeitos.
 - `fromMe`, grupo, número desconhecido → ignorados sem chamar IA.
 - Payload malformado → `400`, sem exceção não tratada.

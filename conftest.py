@@ -1,3 +1,5 @@
+import http.client
+import socket
 from datetime import date
 
 import pytest
@@ -6,6 +8,22 @@ from apps.accounts.services import create_user
 from apps.categories.models import Category, CategoryKind, Subcategory
 from apps.transactions.models import TransactionSource, TransactionType
 from apps.transactions.services import create_transaction
+
+
+class NetworkBlockedError(RuntimeError):
+    pass
+
+
+@pytest.fixture(autouse=True)
+def _block_network(monkeypatch):
+    """No real HTTP during tests (Evolution/OpenAI must be mocked). DB uses libpq, unaffected."""
+
+    def blocked(*args, **kwargs):
+        raise NetworkBlockedError("Network access is disabled in tests.")
+
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    monkeypatch.setattr(http.client.HTTPConnection, "connect", blocked)
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", blocked)
 
 
 @pytest.fixture

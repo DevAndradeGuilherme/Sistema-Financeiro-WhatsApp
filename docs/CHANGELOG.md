@@ -6,6 +6,20 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — transporte WhatsApp via Evolution API 2.3.7 (V1.0, parcial)
+- App `whatsapp`: webhook `POST /api/v1/webhooks/evolution/` autenticado por `X-Webhook-Secret`,
+  parser de `messages.upsert` para `NormalizedMessage` (TEXT/AUDIO/IMAGE/UNSUPPORTED),
+  `InboundMessage` com unicidade `(provider, instance, provider_message_id)`, estados
+  RECEIVED/IGNORED/READY/PROCESSED/FAILED e motivos de descarte.
+- Filtros: `fromMe`, grupos, broadcast, remetente não resolvido/desconhecido/inativo, mídia
+  ainda não suportada, tipos não suportados. Usuário desconhecido nunca é criado.
+- `EvolutionClient` (stdlib `urllib`): `send_text`, estado da instância, `set_webhook`/`find_webhook`,
+  timeout e erros tipados. Comandos `evolution_check`, `evolution_set_webhook`, `evolution_send_test`.
+- Ponto de integração `pipeline.handle_ready_message`; eco técnico opcional `WHATSAPP_DEV_ECHO`
+  (proibido em produção).
+- Admin somente leitura de mensagens; bloqueio de rede real na suíte de testes.
+
+
 ### Added — núcleo do domínio financeiro (V1.0, parcial)
 - Projeto Django 5.2 LTS (Python 3.12) com settings `base`/`runtime`/`test` por variáveis de
   ambiente; guardas para `DJANGO_ENV=production`; sem fallback para SQLite.

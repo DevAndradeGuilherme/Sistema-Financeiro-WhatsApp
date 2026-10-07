@@ -98,19 +98,23 @@ queryset method nomeado (`.active()`).
 
 | Campo | Tipo | Regras |
 |---|---|---|
+| `provider` | varchar | `EVOLUTION` |
 | `instance` | varchar | instância da Evolution |
-| `external_message_id` | varchar | id da mensagem no WhatsApp |
-| — | | `UNIQUE (instance, external_message_id)` → idempotência do webhook |
-| `sender_phone` | varchar | E.164 normalizado |
+| `provider_message_id` | varchar(128) | id da mensagem no WhatsApp; `CHECK <> ''` |
+| — | | `UNIQUE (provider, instance, provider_message_id)` → idempotência do webhook |
+| `message_type` | varchar | `TEXT` \| `AUDIO` \| `IMAGE` \| `UNSUPPORTED`; `CHECK` |
+| `sender_phone` | varchar | E.164 (vazio se não resolvido) |
 | `user` | FK User, null | resolvido pelo telefone; `SET_NULL` |
-| `message_type` | varchar | `TEXT` \| `AUDIO` \| `IMAGE` \| `OTHER` |
-| `text` | text, null | texto ou transcrição |
-| `status` | varchar | `RECEIVED` \| `PROCESSING` \| `PROCESSED` \| `IGNORED` \| `FAILED` |
-| `error_code` | varchar, null | código interno, sem dados sensíveis |
-| `received_at`, `processed_at` | timestamptz | |
+| `text` | text | somente para `READY` (vazio nos demais) |
+| `provider_timestamp` | timestamptz, null | horário da mensagem no provider |
+| `status` | varchar | `RECEIVED` \| `IGNORED` \| `READY` \| `PROCESSED` \| `FAILED`; `CHECK`; índice `(status, received_at)` |
+| `ignore_reason` | varchar | motivo de `IGNORED` (ver `WHATSAPP.md §4`) |
+| `error_code` | varchar | código interno, sem dados sensíveis |
+| `received_at`, `updated_at`, `processed_at` | timestamptz | |
 
-Payload bruto: armazenar apenas se necessário para debug, com política de retenção
-definida antes (contém dados pessoais). Mídias **não** ficam no banco (Supabase Storage, V1.4).
+Payload bruto **não** é armazenado (contém `apikey` da instância e dados pessoais).
+Mídias **não** ficam no banco (Supabase Storage, V1.4). RLS habilitado pelo mesmo
+`post_migrate` das demais tabelas.
 
 Opcional/recomendado: registro da interpretação (`intent`, modelo, latência, tokens,
 resultado da validação) ligado à `InboundMessage`, para auditoria e melhoria de prompts.

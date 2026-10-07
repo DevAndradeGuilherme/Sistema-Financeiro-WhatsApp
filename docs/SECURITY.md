@@ -11,8 +11,8 @@ Revisores (Codex) devem usar este documento como checklist.
 | S2 | Usuário comum acessa somente os próprios dados | selectors com escopo obrigatório |
 | S3 | Family ADMIN apenas **lê** dados de terceiros da sua família | `can_modify_transaction` = somente owner |
 | S4 | Segredos nunca são versionados | `.gitignore`, `.env.example` só com placeholders |
-| S5 | Webhook exige autenticação | segredo compartilhado + `compare_digest` |
-| S6 | Mensagens duplicadas são idempotentes | constraints `UNIQUE` (ver `WHATSAPP.md §3`) |
+| S5 | Webhook exige autenticação | header `X-Webhook-Secret` + `compare_digest` (`WHATSAPP.md §3`) |
+| S6 | Mensagens duplicadas são idempotentes | constraints `UNIQUE` (ver `WHATSAPP.md §5`) |
 | S7 | Logs não expõem segredos nem dados financeiros completos | redaction em `common` |
 | S8 | Soft delete onde o domínio define | `deleted_at`; selectors filtram |
 | S9 | Toda entrada externa é não confiável | payload Evolution, saída da IA, mídias, Admin inputs |
@@ -62,6 +62,12 @@ Revisores (Codex) devem usar este documento como checklist.
 - Conexão com o banco via SSL.
 
 ## 7. Webhook e rede
+
+Implementado no app `whatsapp`: segredo verificado antes do parse; `fromMe`, grupos e
+broadcast ignorados; remetente desconhecido não é criado nem recebe resposta; payload bruto
+(inclui `apikey` da instância enviada pela Evolution) não é persistido; logs só com
+`provider_message_id`, instância, tipo e status — nunca texto, telefone, API key ou segredo;
+`WHATSAPP_DEV_ECHO` proibido em produção; chamadas à Evolution sempre com timeout.
 
 - HTTPS obrigatório (Nginx com TLS).
 - Limite de tamanho de corpo no Nginx e no Django.

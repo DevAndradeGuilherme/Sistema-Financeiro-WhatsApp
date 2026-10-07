@@ -5,75 +5,162 @@ Tabela `InboundMessage`: [`DATABASE.md`](DATABASE.md).
 
 ## 1. Responsabilidades do app `whatsapp`
 
-- Receber e autenticar webhooks da Evolution API.
-- Normalizar payload em uma estrutura interna (não espalhar o formato da Evolution pelo código).
-- Garantir idempotência.
-- Identificar o remetente (telefone → `User`).
-- Orquestrar: texto → `ai` → validação → `transactions` → resposta.
-- Enviar respostas pela Evolution API.
-- (V1.3/V1.4) Baixar mídias e convertê-las em texto/proposta.
+| Módulo | Papel |
+|---|---|
+| `conf.py` | Lê `EVOLUTION_*`; falha com `ImproperlyConfigured` quando a operação precisa de um valor ausente |
+| `parsers.py` | Único lugar que conhece o JSON da Evolution → `NormalizedMessage` |
+| `services.py` | Reserva idempotente, filtros, identificação do remetente → `READY`/`IGNORED` |
+| `pipeline.py` | Ponto de integração `handle_ready_message(record)` — receberá IA + domínio financeiro |
+| `views.py` | Webhook fino: autentica → parseia → service → status HTTP |
+| `client.py` | HTTP para a Evolution (stdlib `urllib`), timeout, erros tipados |
+| `admin.py` | `InboundMessage` somente leitura (diagnóstico, não é fila) |
+| `management/commands/` | `evolution_check`, `evolution_set_webhook`, `evolution_send_test` |
 
 O app não contém regra financeira; chama services/selectors dos apps de domínio.
+O pipeline futuro consome `InboundMessage` (`READY`, com `user` e `text`), nunca o JSON bruto.
 
-## 2. Webhook
+## 2. Contrato Evolution utilizado (v2.3.7)
 
-- Endpoint dedicado, `POST` apenas, `csrf_exempt` (é server-to-server), sem sessão.
-- **Autenticação obrigatória**: segredo compartilhado `EVOLUTION_WEBHOOK_SECRET`, enviado
-  em header customizado configurado no webhook da Evolution; se a versão usada não suportar
-  headers, segredo como segmento do path. Comparação com `hmac.compare_digest`.
-  Requisição sem segredo válido → `401`/`403`, sem processamento e sem log do segredo.
-- Validar também que `instance` corresponde a `EVOLUTION_INSTANCE_NAME`.
-- Limitar tamanho do corpo e rejeitar JSON inválido com `400`.
-- Eventos de interesse: mensagens recebidas (`messages.upsert`). Demais eventos → `200` no-op.
-- Ignorar (`200`, status `IGNORED` quando registrado):
-  - mensagens com `fromMe = true` (inclui as próprias respostas do sistema);
-  - mensagens de grupos e broadcast/status;
-  - tipos não suportados na versão atual (responder orientação curta, se for usuário conhecido).
-- Responder `200` sempre que a mensagem foi aceita ou deliberadamente ignorada, para evitar
-  reentregas desnecessárias. Erros internos após a persistência não devem gerar reprocessamento
-  duplicado (idempotência cobre).
+Versão validada ao vivo: **Evolution API 2.3.7** (`evoapicloud/evolution-api:v2.3.7`),
+integração `WHATSAPP-BAILEYS`. Contrato conferido no código-fonte dessa versão. Ao atualizar a
+Evolution, revalidar esta seção e as fixtures de `apps/whatsapp/tests/payloads.py`.
 
-Os nomes exatos de campos do payload dependem da versão da Evolution API em uso: fixar a
-versão no deploy e manter fixtures reais anonimizadas em testes.
+Autenticação de saída: header `apikey: <EVOLUTION_API_KEY>`.
 
-## 3. Idempotência
+| Operação | Chamada |
+|---|---|
+| Versão/liveness | `GET /` → `{"version": "2.3.7", ...}` |
+| Estado | `GET /instance/connectionState/{instance}` → `{"instance": {"state": "open"}}` |
+| Enviar texto | `POST /message/sendText/{instance}` `{"number": "5531999998888", "text": "..."}` → `201`, `{"key": {"id": ...}, "status": "PENDING"}` |
+| Webhook (upsert) | `POST /webhook/set/{instance}` `{"webhook": {"enabled", "url", "headers", "byEvents": false, "base64": false, "events": ["MESSAGES_UPSERT"]}}` |
+| Consultar webhook | `GET /webhook/find/{instance}` (contém os headers — **não imprimir**) |
+| Criar instância (manual, uma vez) | `POST /instance/create` `{"instanceName", "integration": "WHATSAPP-BAILEYS", "qrcode": true}` |
 
-Duas camadas, ambas garantidas por constraint no banco:
+Webhook recebido (`messages.upsert`), campos usados:
 
-1. `InboundMessage`: `UNIQUE (instance, external_message_id)`. O webhook insere a mensagem
-   **antes** de qualquer processamento. `IntegrityError` → duplicata → `200` no-op, sem
-   chamar IA e sem responder de novo.
-2. `Transaction.idempotency_key = "whatsapp:<instance>:<external_message_id>"` com `UNIQUE`.
-   Protege contra corrida ou reprocessamento manual.
+```jsonc
+{
+  "event": "messages.upsert",          // normalizado para MESSAGES_UPSERT
+  "instance": "<instance>",
+  "data": {
+    "key": {"remoteJid": "5531...@s.whatsapp.net", "fromMe": false, "id": "3EB0..."},
+    "messageType": "conversation",     // texto (extendedText já vem convertido), audioMessage, imageMessage, ...
+    "message": {"conversation": "10 reais de gasolina"},
+    "messageTimestamp": 1791331200     // segundos (UTC)
+  },
+  "apikey": "<token da instância>"     // NUNCA persistido nem logado
+}
+```
 
-Mensagens que ficarem em `PROCESSING`/`FAILED` (ex.: crash) não são reprocessadas
-automaticamente no MVP; reprocessamento é ação manual do administrador e continua protegido
-pela camada 2.
+- `@lid`: a v2.3.7 substitui `remoteJid` por `remoteJidAlt` quando conhecido. Se ainda vier
+  `@lid` sem alternativa, o remetente fica não resolvido (`SENDER_UNRESOLVED`).
+- Reentrega: a Evolution **não** repete respostas `400, 401, 403, 404, 422`; demais falhas são
+  repetidas (até 10 tentativas, backoff exponencial).
+- `base64: false` evita mídia embutida no webhook.
+- Mensagens enviadas pela API (`sendText`) geram o evento `send.message`, não `messages.upsert`;
+  `fromMe` chega no webhook quando alguém escreve pelo próprio aparelho do bot — e é ignorado.
 
-## 4. Identificação do remetente
+Validado ao vivo em 2026-10-06 (instância `finance-whatsapp-dev`): conexão/versão, configuração
+do webhook com header secreto, `401` sem segredo, evento não tratado ignorado, texto de usuário
+cadastrado → `READY`, eco técnico de desenvolvimento entregue, envio via `evolution_send_test`.
 
-- Extrair o número do JID do remetente (`<numero>@s.whatsapp.net`) e normalizar para E.164
-  em `common.phone`.
-- **Atenção a números brasileiros**: o JID pode vir sem o nono dígito de celular
-  (ex.: `553199998888` em vez de `5531999998888`). A normalização deve considerar
-  ambas as formas ao buscar o usuário e cadastrar o formato canônico com nono dígito.
-- Versões recentes do WhatsApp podem identificar contatos por LID (`@lid`) em vez do número.
-  Se o payload não trouxer o telefone, a mensagem não é associada a usuário (status `IGNORED`)
-  até existir regra documentada para mapear LID.
-- Número desconhecido ou usuário inativo: registrar, não chamar a IA, não criar transação,
-  não revelar informações. Sem resposta automática no MVP.
+## 3. Webhook
 
-## 5. Envio de respostas
+`POST /api/v1/webhooks/evolution/` — Django puro, `csrf_exempt` só nesta view (CSRF continua
+ativo no resto da aplicação).
 
-- Cliente Evolution encapsulado em `apps/whatsapp/` (ex.: `client.py`), com timeout
-  (`EVOLUTION_TIMEOUT_SECONDS`) e `EVOLUTION_API_KEY` em header; nunca logar a chave.
-- Mensagens curtas, pt-BR, valores em `R$ 1.234,56`, datas `dd/mm/aaaa`.
-- Confirmação de criação inclui: tipo, valor, categoria/subcategoria, data e como desfazer
-  (quando disponível, V1.1).
-- Falha no envio: registrar erro; não desfazer a transação já criada.
-- Textos de resposta centralizados (ex.: `apps/whatsapp/messages.py`), não espalhados.
+**Autenticação:** header `X-Webhook-Secret` com o valor de `EVOLUTION_WEBHOOK_SECRET`,
+configurado em `webhook.headers` pelo comando `evolution_set_webhook`. Comparação com
+`hmac.compare_digest`, antes de qualquer parse. O segredo nunca vai na URL nem em logs.
 
-## 6. Mídia (versões futuras)
+Política HTTP:
+
+| Situação | Status | Efeito |
+|---|---|---|
+| Segredo ausente/inválido | `401` | nada processado |
+| JSON inválido, corpo grande demais ou payload malformado | `400` | nada processado (não há retry) |
+| `instance` ≠ `EVOLUTION_INSTANCE_NAME` | `403` | nada processado |
+| Evento diferente de `MESSAGES_UPSERT` | `200` `ignored` | não registrado |
+| Mensagem aceita / ignorada | `200` `ready` / `ignored` | registrada |
+| Duplicata | `200` `duplicate` | nada reexecutado |
+| Banco indisponível antes da reserva | `503` | Evolution repete (seguro: nada foi reservado) |
+| Erro no pipeline após a reserva | `200`, status `FAILED` | retry seria no-op; reprocessamento é manual |
+| `EVOLUTION_WEBHOOK_SECRET` não configurado | `500` | falha explícita de configuração |
+
+## 4. Mensagem normalizada e filtros
+
+`parsers.NormalizedMessage` (dataclass imutável; `repr` sem texto/telefone): `provider`,
+`instance`, `provider_message_id`, `remote_jid`, `sender_phone` (E.164 via `common.phone`
+ou `None`), `message_type` (`TEXT`/`AUDIO`/`IMAGE`/`UNSUPPORTED`), `text`, `timestamp`
+(aware, UTC), `from_me`, `is_group`, `is_broadcast`, `metadata` (`provider_message_type`).
+
+Classificação em `services.receive_message`, nesta ordem (resultado → `ignore_reason`):
+
+1. `fromMe` → `FROM_ME` (evita loop com as próprias respostas).
+2. Grupo (`@g.us`) → `GROUP`; broadcast/status → `BROADCAST`.
+3. Telefone não resolvido (ex.: `@lid` sem alternativa) → `SENDER_UNRESOLVED`.
+4. Número não cadastrado → `UNKNOWN_SENDER`. **Usuário não é criado e não há resposta**
+   (evita spam e enumeração de números). Cadastro continua no Django Admin.
+5. Usuário inativo → `INACTIVE_USER`.
+6. Áudio/imagem → `MEDIA_NOT_SUPPORTED` (reconhecidos; processamento na V1.3/V1.4; sem download).
+7. Outros tipos → `UNSUPPORTED_TYPE`. Texto vazio → `EMPTY_TEXT`; > 4096 caracteres → `TEXT_TOO_LONG`.
+8. Texto de usuário ativo → `READY` (com `user` e `text`).
+
+## 5. Idempotência e estados
+
+Ordem: autenticar → parsear → **reservar** → classificar → pipeline.
+
+- Reserva = `INSERT` em `InboundMessage` com `UNIQUE (provider, instance, provider_message_id)`,
+  dentro de `transaction.atomic()`. Requisições concorrentes: o banco aceita uma; a outra recebe
+  `IntegrityError` e é tratada como duplicata. Não há `if exists` como proteção.
+- A chave inclui `provider` e `instance` porque o id do WhatsApp só é único dentro da conta.
+- Duplicatas retornam antes de qualquer efeito (pipeline, envio de mensagem).
+- Segunda camada (próxima etapa): `Transaction.idempotency_key = "whatsapp:<instance>:<id>"`.
+
+| Status | Significado |
+|---|---|
+| `RECEIVED` | Reservada; classificação não terminou (se persistir, houve falha antes de classificar) |
+| `IGNORED` | Não processada de propósito; ver `ignore_reason` |
+| `READY` | Usuário conhecido + texto; aguardando o pipeline de interpretação |
+| `PROCESSED` | Pipeline de negócio concluído (usado a partir da integração com IA) |
+| `FAILED` | Erro inesperado após a reserva (`error_code`); não é reprocessada automaticamente |
+
+Dados persistidos: campos técnicos + `sender_phone` + `text` **somente** para `READY`.
+Payload bruto **não** é armazenado (contém `apikey` da instância e dados pessoais).
+Retenção de `InboundMessage` deve ser definida antes da produção.
+
+## 6. Envio e operação
+
+- `EvolutionClient.send_text(phone, text)`: normaliza o destino por `common.phone`, valida
+  texto (1–4096), usa `EVOLUTION_INSTANCE_NAME`, timeout `EVOLUTION_TIMEOUT_SECONDS`.
+  Erros: `EvolutionTimeoutError`, `EvolutionConnectionError`, `EvolutionHTTPError(status_code)`,
+  `EvolutionResponseError`. Sem retry próprio.
+- Respostas ao usuário: mensagens curtas, pt-BR, `R$ 1.234,56`, `dd/mm/aaaa`; falha no envio
+  é registrada e não desfaz a transação.
+- `WHATSAPP_DEV_ECHO=True` (somente desenvolvimento; proibido com `DJANGO_ENV=production`):
+  responde "Mensagem recebida." a mensagens `READY`. É um aviso técnico, não resposta financeira;
+  será substituído pelo pipeline de IA em `pipeline.handle_ready_message`.
+
+Comandos (nunca imprimem API key nem segredo):
+
+```bash
+python manage.py evolution_check                       # versão, estado, webhook, header confere?
+python manage.py evolution_set_webhook --url https://<host>/api/v1/webhooks/evolution/
+python manage.py evolution_send_test --phone 31999998888 [--text "..."]
+```
+
+Desenvolvimento local:
+
+- `EVOLUTION_API_BASE_URL` é a URL vista **pelo Django**: no container `web`, use
+  `http://host.docker.internal:8080`; rodando no host, `http://localhost:8080`.
+- A URL do webhook é a vista **pela Evolution**: com Evolution em Docker e Django no host,
+  `http://host.docker.internal:8000/api/v1/webhooks/evolution/` (inclua `host.docker.internal`
+  em `DJANGO_ALLOWED_HOSTS`). Com Evolution remota, use um túnel HTTPS (qualquer ferramenta);
+  o túnel não faz parte da aplicação nem do container Django.
+- Pareamento: após criar a instância, escanear o QR Code no Manager
+  (`<EVOLUTION_API_BASE_URL>/manager`) ou via `GET /instance/connect/{instance}`.
+
+## 7. Mídia (versões futuras)
 
 ### Áudio — V1.3
 
