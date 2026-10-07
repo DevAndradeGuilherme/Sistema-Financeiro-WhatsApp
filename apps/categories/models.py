@@ -52,6 +52,12 @@ class CatalogEntry(models.Model):
 
 class Category(CatalogEntry):
     kind = models.CharField("tipo", max_length=10, choices=CategoryKind.choices)
+    is_fallback = models.BooleanField(
+        "fallback",
+        default=False,
+        help_text="Usada quando a mensagem não se encaixa em outra categoria. "
+        "Exatamente uma por tipo (despesa e receita); precisa estar ativa.",
+    )
 
     class Meta:
         verbose_name = "categoria"
@@ -67,6 +73,18 @@ class Category(CatalogEntry):
             models.CheckConstraint(
                 condition=models.Q(kind__in=CategoryKind.values),
                 name="category_kind_valid",
+            ),
+            models.UniqueConstraint(
+                fields=["kind"],
+                condition=models.Q(is_fallback=True),
+                name="category_single_fallback_per_kind",
+                violation_error_message="Já existe uma categoria de fallback para esse tipo.",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(is_fallback=False)
+                | (models.Q(is_active=True) & ~models.Q(kind=CategoryKind.BOTH)),
+                name="category_fallback_active_and_typed",
+                violation_error_message="Fallback deve estar ativa e ser de despesa ou receita.",
             ),
         ]
 

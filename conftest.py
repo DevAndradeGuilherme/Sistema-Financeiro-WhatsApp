@@ -22,6 +22,15 @@ def _block_network(monkeypatch):
         raise NetworkBlockedError("Network access is disabled in tests.")
 
     monkeypatch.setattr(socket, "create_connection", blocked)
+    real_getaddrinfo = socket.getaddrinfo
+
+    def local_only_getaddrinfo(host, *args, **kwargs):
+        # psycopg resolves the (local) test database host through Python's resolver.
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return real_getaddrinfo(host, *args, **kwargs)
+        raise NetworkBlockedError("Network access is disabled in tests.")
+
+    monkeypatch.setattr(socket, "getaddrinfo", local_only_getaddrinfo)
     monkeypatch.setattr(http.client.HTTPConnection, "connect", blocked)
     monkeypatch.setattr(http.client.HTTPSConnection, "connect", blocked)
 

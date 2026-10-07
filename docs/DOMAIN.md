@@ -57,15 +57,17 @@ Transaction N ── 0..1 Subcategory
   (catálogo inicial via `python manage.py seed_categories`, idempotente por `slug`, nunca
   sobrescreve alterações do administrador).
 - A IA nunca cria, renomeia ou sugere categorias novas; ela só escolhe entre as ativas.
-- `Category`: `name`, `slug` (chave estável usada no contrato com a IA), `kind ∈ {EXPENSE, INCOME, BOTH}`,
+- `Category`: `name`, `slug` (chave estável usada pelo seed; a IA referencia o `id` inteiro), `kind ∈ {EXPENSE, INCOME, BOTH}`,
   `description`, `aliases` (termos que ajudam a classificação), `is_active`, `sort_order`.
   `BOTH` aceita despesas e receitas. Categoria em uso não pode mudar para um `kind`
   incompatível com suas transações.
 - `Subcategory`: pertence a uma `Category` (herda o `kind` dela); mesmos campos de `name`, `slug`,
   `description`, `aliases`, `is_active`. Subcategoria em uso não pode mudar de categoria.
 - Hierarquia de **dois níveis** apenas.
-- Categorias de fallback: "Outros gastos" (EXPENSE) e "Outras receitas" (INCOME). A marcação
-  explícita de fallback será adicionada junto com a integração de IA.
+- **Fallback explícito**: `Category.is_fallback`. Exatamente uma por tipo (EXPENSE e INCOME),
+  garantido no banco (unique parcial por `kind`; fallback precisa estar ativa e não pode ser
+  `BOTH`). Identificada pela flag, nunca pelo nome. O seed marca "Outros gastos"/"Outras
+  receitas" apenas se ainda não houver fallback do tipo (não sobrescreve escolha do admin).
 - Desativar é a forma padrão de "remover". Exclusão física só se não houver transações
   referenciando (FK `PROTECT`). Categoria inativa não é oferecida à IA e não aceita novas
   transações, mas continua válida em transações antigas e em consultas.
@@ -98,8 +100,9 @@ No código, o dono é o campo `user`. `source ∈ {TEXT, AUDIO, IMAGE, MANUAL, A
 3. `category.kind` deve ser igual a `transaction.type` ou `BOTH`.
 4. `subcategory`, se presente, deve pertencer a `category`.
 5. Categoria/subcategoria precisam estar ativas no momento da criação ou edição.
-6. Categoria não reconhecida pela validação → fallback do `kind` correspondente, e a
-   resposta informa a classificação usada.
+6. Na criação, categoria proposta inexistente/inativa/incompatível → fallback do tipo
+   (flag `is_fallback`), e a resposta informa a categoria usada. Fallback não esconde erro
+   técnico: sem fallback configurado, a mensagem falha sem efeito.
 7. Sem valor identificável → nenhuma transação é criada; o sistema pede o valor.
 8. Saldo = soma de INCOME − soma de EXPENSE, calculado no banco.
 9. Totais e agregações sempre por SQL (ORM), excluindo transações soft-deleted.

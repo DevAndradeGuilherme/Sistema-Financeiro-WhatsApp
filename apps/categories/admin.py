@@ -25,8 +25,8 @@ class SubcategoryInline(SuperuserCatalogMixin, admin.TabularInline):
 
 @admin.register(Category)
 class CategoryAdmin(SuperuserCatalogMixin, admin.ModelAdmin):
-    list_display = ("name", "slug", "kind", "is_active", "sort_order", "updated_at")
-    list_filter = ("kind", "is_active")
+    list_display = ("name", "slug", "kind", "is_active", "is_fallback", "sort_order", "updated_at")
+    list_filter = ("kind", "is_active", "is_fallback")
     search_fields = ("name", "slug")
     prepopulated_fields = {"slug": ("name",)}
     readonly_fields = ("created_at", "updated_at")

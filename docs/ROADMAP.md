@@ -1,6 +1,8 @@
 # Roadmap
 
-Versão atual: **V1.0 em andamento** — domínio financeiro e transporte WhatsApp entregues; falta IA + pipeline textual.
+Versão atual: **V1.0 funcionalmente concluída** (validada ponta a ponta em DEV, 2026-10-06).
+Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
+produção **não** está pronta.
 
 Regra: implementar somente a versão corrente. Itens de versões futuras só influenciam
 o desenho quando registrado aqui (ex.: estrutura de família desde a V1.0).
@@ -9,7 +11,7 @@ Ao concluir uma versão, atualizar a linha "Versão atual" e o `CHANGELOG.md`.
 ## V1.0 — Fundação funcional
 
 - [x] Projeto Django, settings por env, Docker, Gunicorn.
-- [ ] Nginx/TLS e procedimento de produção (`DEPLOYMENT.md`).
+- [ ] Nginx/TLS e procedimento de produção (`DEPLOYMENT.md`) — pendência operacional.
 - [x] Supabase PostgreSQL (migrations aplicadas em dev); testes com PostgreSQL local.
 - [x] `accounts`: User customizado com telefone E.164.
 - [x] `categories`: categorias/subcategorias com aliases, catálogo inicial, Django Admin.
@@ -18,9 +20,10 @@ Ao concluir uma versão, atualizar a linha "Versão atual" e o `CHANGELOG.md`.
   (período, total, por categoria, top despesas).
 - [x] `whatsapp` (transporte): webhook Evolution autenticado, `InboundMessage`, idempotência,
   filtros (fromMe/grupo/mídia), identificação por telefone, client de envio, comandos operacionais.
-- [ ] `whatsapp` (pipeline): ligar `READY` → IA → services financeiros → resposta.
-- [ ] `ai`: interpretação textual estruturada (`CREATE_TRANSACTION`, `QUERY_TRANSACTIONS`,
-  `HELP`, `UNKNOWN`).
+- [x] `whatsapp` (pipeline): `READY` → IA → validação → services/selectors → resposta → `PROCESSED`.
+- [x] `ai`: interpretação textual estruturada (`CREATE_TRANSACTION`, `QUERY_TRANSACTIONS`,
+  `HELP`, `UNKNOWN`) via Responses API + schema estrito.
+- [x] Fallback explícito de categoria (`is_fallback`).
 - [x] Django Admin para usuários, famílias, categorias e transações.
 - [x] Django Admin para mensagens (somente leitura).
 

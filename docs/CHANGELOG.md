@@ -6,6 +6,22 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — pipeline textual com IA (V1.0 funcionalmente concluída)
+- App `ai`: SDK oficial `openai` 2.54 (Responses API), Structured Outputs estrito, `store=False`,
+  uma chamada por mensagem (`max_retries=0`), contrato `v1.0` (ids de categoria do catálogo,
+  valor como string decimal), erros mapeados para códigos sanitizados, logs só com métricas.
+- `whatsapp.pipeline`/`actions`/`messages`: validação Django da proposta, criação via
+  `create_transaction`, consultas `TOTAL`/`BALANCE` via selectors, respostas locais em pt-BR,
+  efeito + `PROCESSED` atômicos, envio fora da transação.
+- `Category.is_fallback` com constraints (um por tipo, ativa, não `BOTH`); seed marca fallback
+  sem sobrescrever escolha do admin.
+- `InboundMessage.intent` e `InboundMessage.transaction` (diagnóstico); `common.formatting` (BRL, períodos).
+- `OPENAI_REASONING_EFFORT` opcional.
+
+### Removed
+- Eco técnico `WHATSAPP_DEV_ECHO` ("Mensagem recebida.").
+
+
 ### Added — transporte WhatsApp via Evolution API 2.3.7 (V1.0, parcial)
 - App `whatsapp`: webhook `POST /api/v1/webhooks/evolution/` autenticado por `X-Webhook-Secret`,
   parser de `messages.upsert` para `NormalizedMessage` (TEXT/AUDIO/IMAGE/UNSUPPORTED),

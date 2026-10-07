@@ -10,7 +10,9 @@ Tabela `InboundMessage`: [`DATABASE.md`](DATABASE.md).
 | `conf.py` | Lê `EVOLUTION_*`; falha com `ImproperlyConfigured` quando a operação precisa de um valor ausente |
 | `parsers.py` | Único lugar que conhece o JSON da Evolution → `NormalizedMessage` |
 | `services.py` | Reserva idempotente, filtros, identificação do remetente → `READY`/`IGNORED` |
-| `pipeline.py` | Ponto de integração `handle_ready_message(record)` — receberá IA + domínio financeiro |
+| `pipeline.py` | `handle_ready_message(record)`: IA → validação → efeito atômico → resposta |
+| `actions.py` | Contexto da IA, validação da proposta (`plan`) e execução (`execute`) no domínio |
+| `messages.py` | Todos os textos enviados ao usuário (locais, nunca gerados pela IA) |
 | `views.py` | Webhook fino: autentica → parseia → service → status HTTP |
 | `client.py` | HTTP para a Evolution (stdlib `urllib`), timeout, erros tipados |
 | `admin.py` | `InboundMessage` somente leitura (diagnóstico, não é fila) |
@@ -61,8 +63,9 @@ Webhook recebido (`messages.upsert`), campos usados:
   `fromMe` chega no webhook quando alguém escreve pelo próprio aparelho do bot — e é ignorado.
 
 Validado ao vivo em 2026-10-06 (instância `finance-whatsapp-dev`): conexão/versão, configuração
-do webhook com header secreto, `401` sem segredo, evento não tratado ignorado, texto de usuário
-cadastrado → `READY`, eco técnico de desenvolvimento entregue, envio via `evolution_send_test`.
+do webhook com header secreto, `401` sem segredo, evento não tratado ignorado, envio via
+`evolution_send_test` e o pipeline completo com OpenAI ("10 reais de gasolina", "recebi 25
+reais", "quanto gastei de transporte esse mês?").
 
 ## 3. Webhook
 
@@ -115,15 +118,26 @@ Ordem: autenticar → parsear → **reservar** → classificar → pipeline.
   `IntegrityError` e é tratada como duplicata. Não há `if exists` como proteção.
 - A chave inclui `provider` e `instance` porque o id do WhatsApp só é único dentro da conta.
 - Duplicatas retornam antes de qualquer efeito (pipeline, envio de mensagem).
-- Segunda camada (próxima etapa): `Transaction.idempotency_key = "whatsapp:<instance>:<id>"`.
+- Segunda camada: `Transaction.idempotency_key = "whatsapp:<instance>:<id>"` (`UNIQUE`).
+
+Pipeline (`pipeline.handle_ready_message`), sem transação aberta durante HTTP:
+
+1. Mensagem não `READY` → nada é feito (nunca vai para a IA).
+2. Contexto + **uma** chamada OpenAI. Falha → `FAILED` (`AI_<código>`), resposta genérica.
+3. `actions.plan`: validação Django da proposta (leitura apenas).
+4. `transaction.atomic()`: `select_for_update` da mensagem; se não estiver mais `READY`, para;
+   executa (`create_transaction` / selectors) e grava `PROCESSED` + `intent` + `transaction`.
+   Efeito e status commitam juntos; qualquer exceção desfaz ambos → `FAILED` (`PIPELINE_ERROR`).
+5. Resposta enviada **depois** do commit. Falha no envio → continua `PROCESSED`, `error_code =
+   REPLY_SEND_FAILED`; nada é reexecutado (reentrega = duplicata; status ≠ READY).
 
 | Status | Significado |
 |---|---|
 | `RECEIVED` | Reservada; classificação não terminou (se persistir, houve falha antes de classificar) |
 | `IGNORED` | Não processada de propósito; ver `ignore_reason` |
-| `READY` | Usuário conhecido + texto; aguardando o pipeline de interpretação |
-| `PROCESSED` | Pipeline de negócio concluído (usado a partir da integração com IA) |
-| `FAILED` | Erro inesperado após a reserva (`error_code`); não é reprocessada automaticamente |
+| `READY` | Usuário conhecido + texto; aguardando/no pipeline de interpretação |
+| `PROCESSED` | Tratada e respondida: efeito ou consulta concluídos. `error_code` preenchido = respondida com rejeição sem efeito (`MISSING_AMOUNT`, `REJECTED_AMOUNT`, `NOT_UNDERSTOOD`, ...) ou `REPLY_SEND_FAILED` |
+| `FAILED` | Falha técnica sem efeito financeiro (`AI_*`, `PIPELINE_ERROR`); não é reprocessada automaticamente |
 
 Dados persistidos: campos técnicos + `sender_phone` + `text` **somente** para `READY`.
 Payload bruto **não** é armazenado (contém `apikey` da instância e dados pessoais).
@@ -137,9 +151,9 @@ Retenção de `InboundMessage` deve ser definida antes da produção.
   `EvolutionResponseError`. Sem retry próprio.
 - Respostas ao usuário: mensagens curtas, pt-BR, `R$ 1.234,56`, `dd/mm/aaaa`; falha no envio
   é registrada e não desfaz a transação.
-- `WHATSAPP_DEV_ECHO=True` (somente desenvolvimento; proibido com `DJANGO_ENV=production`):
-  responde "Mensagem recebida." a mensagens `READY`. É um aviso técnico, não resposta financeira;
-  será substituído pelo pipeline de IA em `pipeline.handle_ready_message`.
+- Textos: `apps/whatsapp/messages.py`. Exemplos: "✅ Gasto registrado: R$ 10,00 em Transporte ·
+  Combustível.", "✅ Entrada registrada: R$ 25,00 em Outras receitas.", "Você gastou R$ 10,00 com
+  Transporte em outubro.", "Seu saldo em outubro é R$ 15,00 (entradas R$ 25,00; gastos R$ 10,00)."
 
 Comandos (nunca imprimem API key nem segredo):
 

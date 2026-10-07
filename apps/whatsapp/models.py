@@ -24,8 +24,8 @@ class InboundMessage(models.Model):
         RECEIVED = "RECEIVED", "Recebida"  # reserved, classification not finished
         IGNORED = "IGNORED", "Ignorada"  # deliberately not processed (see ignore_reason)
         READY = "READY", "Pronta"  # known user + text, ready for the interpretation pipeline
-        PROCESSED = "PROCESSED", "Processada"  # business pipeline finished (next step: AI)
-        FAILED = "FAILED", "Falhou"  # unexpected error after reservation; not retried automatically
+        PROCESSED = "PROCESSED", "Processada"  # handled and answered (effect or reply committed)
+        FAILED = "FAILED", "Falhou"  # technical failure, no financial effect; not retried
 
     class IgnoreReason(models.TextChoices):
         FROM_ME = "FROM_ME", "Enviada pela própria instância"
@@ -63,6 +63,15 @@ class InboundMessage(models.Model):
         "motivo", max_length=20, choices=IgnoreReason.choices, blank=True
     )
     error_code = models.CharField("código de erro", max_length=50, blank=True)
+    intent = models.CharField("intenção interpretada", max_length=30, blank=True)
+    transaction = models.ForeignKey(
+        "transactions.Transaction",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="inbound_messages",
+        verbose_name="transação criada",
+    )
     received_at = models.DateTimeField("recebida em", auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     processed_at = models.DateTimeField("finalizada em", null=True, blank=True)

@@ -7,7 +7,6 @@ from django.test import Client, override_settings
 
 from apps.accounts.models import User
 from apps.transactions.models import Transaction
-from apps.whatsapp.client import EvolutionHTTPError, SentMessage
 from apps.whatsapp.models import InboundMessage, MessageType
 
 from . import payloads
@@ -31,8 +30,9 @@ def known_user(make_user):
     return make_user(username="alice", phone_number="+5531999990001")
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def pipeline():
+    """The AI pipeline is covered in test_pipeline.py; here it is stubbed."""
     with mock.patch("apps.whatsapp.views.handle_ready_message") as handler:
         yield handler
 
@@ -266,39 +266,3 @@ def test_pipeline_error_marks_failed_and_returns_200(client, known_user):
     with mock.patch("apps.whatsapp.views.handle_ready_message") as handler:
         assert post(client, payloads.text()).json() == {"status": "duplicate"}
     handler.assert_not_called()
-
-
-# --- Development echo ---------------------------------------------------------------------
-
-
-@override_settings(WHATSAPP_DEV_ECHO=True)
-def test_dev_echo_sends_technical_ack_once(client, known_user):
-    with mock.patch("apps.whatsapp.pipeline.EvolutionClient") as client_cls:
-        client_cls.return_value.send_text.return_value = SentMessage("ID", "PENDING")
-        post(client, payloads.text())
-        post(client, payloads.text())  # duplicate: no second reply
-    client_cls.return_value.send_text.assert_called_once_with(
-        "+5531999990001", "Mensagem recebida."
-    )
-
-
-@override_settings(WHATSAPP_DEV_ECHO=True)
-def test_dev_echo_not_sent_for_ignored_messages(client):
-    with mock.patch("apps.whatsapp.pipeline.EvolutionClient") as client_cls:
-        post(client, payloads.text(remote_jid="5521988887777@s.whatsapp.net"))
-    client_cls.assert_not_called()
-
-
-@override_settings(WHATSAPP_DEV_ECHO=True)
-def test_dev_echo_failure_does_not_fail_message(client, known_user):
-    with mock.patch("apps.whatsapp.pipeline.EvolutionClient") as client_cls:
-        client_cls.return_value.send_text.side_effect = EvolutionHTTPError(500, "x")
-        response = post(client, payloads.text())
-    assert response.status_code == 200
-    assert InboundMessage.objects.get().status == Status.READY
-
-
-def test_dev_echo_disabled_by_default(client, known_user):
-    with mock.patch("apps.whatsapp.pipeline.EvolutionClient") as client_cls:
-        post(client, payloads.text())
-    client_cls.assert_not_called()

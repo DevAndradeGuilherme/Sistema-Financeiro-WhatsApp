@@ -126,7 +126,8 @@ def _ignore(record: InboundMessage, reason: str) -> None:
 
 
 def _mark_failed(record: InboundMessage, error_code: str) -> None:
-    InboundMessage.objects.filter(pk=record.pk).update(
+    # Only messages without a committed effect may become FAILED.
+    InboundMessage.objects.filter(pk=record.pk, status__in=[Status.RECEIVED, Status.READY]).update(
         status=Status.FAILED,
         error_code=error_code[:50],
         processed_at=timezone.now(),

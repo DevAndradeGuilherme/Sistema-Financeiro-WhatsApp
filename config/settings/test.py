@@ -52,4 +52,9 @@ EVOLUTION_API_KEY = "test-evolution-api-key"
 EVOLUTION_INSTANCE_NAME = "test-instance"
 EVOLUTION_WEBHOOK_SECRET = "test-webhook-secret"
 EVOLUTION_TIMEOUT_SECONDS = "5"
-WHATSAPP_DEV_ECHO = False
+
+# Fixed fake OpenAI configuration: the client is always mocked; network is blocked.
+OPENAI_API_KEY = "test-openai-api-key"
+OPENAI_MODEL = "test-model"
+OPENAI_TIMEOUT_SECONDS = "5"
+OPENAI_REASONING_EFFORT = None

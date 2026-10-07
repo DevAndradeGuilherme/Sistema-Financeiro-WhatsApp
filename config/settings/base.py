@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     "apps.families",
     "apps.categories",
     "apps.transactions",
+    "apps.ai",
     "apps.whatsapp",
 ]
 
@@ -158,10 +159,14 @@ EVOLUTION_INSTANCE_NAME = env("EVOLUTION_INSTANCE_NAME")
 EVOLUTION_WEBHOOK_SECRET = env("EVOLUTION_WEBHOOK_SECRET")
 EVOLUTION_TIMEOUT_SECONDS = env("EVOLUTION_TIMEOUT_SECONDS")
 
-# Development-only technical acknowledgement ("Mensagem recebida.") for READY messages.
-WHATSAPP_DEV_ECHO = env_bool("WHATSAPP_DEV_ECHO", default=False)
-if IS_PRODUCTION and WHATSAPP_DEV_ECHO:
-    raise ImproperlyConfigured("WHATSAPP_DEV_ECHO cannot be enabled when DJANGO_ENV=production.")
+# --- OpenAI ------------------------------------------------------------------
+# Validated where used (apps.ai.conf). The model always comes from configuration.
+
+OPENAI_API_KEY = env("OPENAI_API_KEY")
+OPENAI_MODEL = env("OPENAI_MODEL")
+OPENAI_TIMEOUT_SECONDS = env("OPENAI_TIMEOUT_SECONDS")
+# Optional; only sent when set (not every model accepts it). See docs/AI_CONTRACT.md.
+OPENAI_REASONING_EFFORT = env("OPENAI_REASONING_EFFORT")
 
 # --- Security ----------------------------------------------------------------
 

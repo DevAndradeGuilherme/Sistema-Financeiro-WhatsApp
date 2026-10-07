@@ -84,17 +84,16 @@ Evolution ──POST──> /webhooks/evolution/<...>   (whatsapp)
   2. Filtra eventos irrelevantes (fromMe, grupo, status).  → 200 no-op
   3. Persiste InboundMessage (unique por message id).      → duplicada: 200 no-op
   4. Resolve remetente → User pelo telefone E.164.         → desconhecido: não processa
-  5. Monta contexto: data de referência (America/Sao_Paulo) + catálogo de categorias ativas.
-  6. ai.interpret(texto, contexto) → Interpretation (schema estruturado).
-  7. Validação Django: tipos, valor Decimal > 0, data, categoria existente/ativa,
-     subcategoria pertencente à categoria, período coerente.
-  8. Despacho por intenção:
-       CREATE_TRANSACTION  → transactions.services.create_transaction(actor, ...)
-       QUERY_TRANSACTIONS  → transactions.selectors.* (escopo autorizado) → agregação SQL
-       UPDATE/UNDO         → services com policy can_modify (V1.1)
+     → status READY (texto + usuário). A partir daqui: whatsapp.pipeline.handle_ready_message
+  5. Monta contexto: data de referência (America/Sao_Paulo) + catálogo ativo (ids inteiros).
+  6. ai.interpret_message(texto, contexto) → Interpretation   [1 chamada OpenAI, sem transação aberta]
+  7. whatsapp.actions.plan: validação Django (Decimal, datas ISO, ids do catálogo, fallback).
+  8. atomic[ lock da InboundMessage (READY?) → efeito → status PROCESSED ]:
+       CREATE_TRANSACTION  → transactions.services.create_transaction(user=remetente, ...)
+       QUERY_TRANSACTIONS  → transactions.selectors.get_total / get_period_totals (SQL)
        HELP / UNKNOWN      → resposta fixa
-  9. Formata resposta pt-BR (R$ 1.234,56; datas dd/mm/aaaa).
- 10. Envia via cliente Evolution; atualiza status da InboundMessage.
+  9. Resposta montada localmente (whatsapp.messages + common.formatting).
+ 10. Envia via cliente Evolution, fora da transação; falha não reexecuta o efeito.
 ```
 
 Processamento **síncrono** dentro da requisição do webhook no MVP (sem fila).
@@ -170,3 +169,9 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-06 — Remetente desconhecido não é criado nem recebe resposta — evita spam/enumeração; cadastro via Admin.
 - 2026-10-06 — Payload bruto do webhook não é persistido; texto só para mensagens `READY` — minimiza dados sensíveis.
 - 2026-10-06 — Erro após a reserva idempotente responde `200` e marca `FAILED` — retry da Evolution seria no-op; reprocessamento manual.
+- 2026-10-06 — Pipeline textual síncrono: 1 chamada OpenAI (Responses API, schema estrito, `store=False`, `max_retries=0`) por mensagem; resposta montada pelo Django — custo/latência previsíveis.
+- 2026-10-06 — IA referencia categorias por id inteiro do catálogo ativo; Django revalida e usa fallback explícito (`Category.is_fallback`) — nunca texto livre nem nome.
+- 2026-10-06 — Efeito financeiro e `PROCESSED` no mesmo `transaction.atomic()` com `select_for_update` da mensagem; chamadas HTTP fora da transação — sem duplicação e sem transação longa.
+- 2026-10-06 — Consultas V1.0 sempre do próprio remetente; contrato sem `scope`/`target_user` — consultas familiares ficam para a V1.2.
+- 2026-10-06 — `OPENAI_REASONING_EFFORT` opcional (dev: `none` com `gpt-6-luna`) — mesma qualidade nos casos testados, sem tokens de raciocínio.
+- 2026-10-06 — Eco técnico `WHATSAPP_DEV_ECHO` removido — substituído pelo pipeline real.

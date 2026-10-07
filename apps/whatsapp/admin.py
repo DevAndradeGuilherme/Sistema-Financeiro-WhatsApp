@@ -13,13 +13,14 @@ class InboundMessageAdmin(admin.ModelAdmin):
         "instance",
         "message_type",
         "status",
+        "intent",
         "ignore_reason",
         "error_code",
         "user",
     )
-    list_filter = ("status", "message_type", "ignore_reason", "instance")
+    list_filter = ("status", "intent", "message_type", "ignore_reason", "instance")
     search_fields = ("provider_message_id", "sender_phone", "user__username")
-    list_select_related = ("user",)
+    list_select_related = ("user", "transaction")
     date_hierarchy = "received_at"
     readonly_fields = [field.name for field in InboundMessage._meta.fields]
 

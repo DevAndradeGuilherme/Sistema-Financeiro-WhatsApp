@@ -78,9 +78,15 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
 - `fromMe`, grupo, número desconhecido → ignorados sem chamar IA.
 - Payload malformado → `400`, sem exceção não tratada.
 
-### Contrato de IA
-- Parse de respostas válidas do schema; respostas inválidas/maliciosas tratadas.
-- Erro/timeout da OpenAI → mensagem genérica, nenhuma transação.
+### Contrato de IA e pipeline
+- `apps/ai/tests`: schema estrito, parse de saídas válidas/maliciosas, mapeamento de erros do
+  SDK (timeout, 401/403/404/429/5xx, incompleta, refusal, JSON inválido), parâmetros da chamada
+  (`store=False`, modelo da config, uma chamada, sem retries), logs sem conteúdo.
+- `apps/whatsapp/tests/test_pipeline.py`: `interpret_message` mockado com a proposta esperada
+  para cada frase pt-BR; valida criação, fallback, datas, consultas, isolamento, idempotência,
+  falha de envio sem recriação e rollback atômico.
+- Smoke test real (manual, fora da suíte): chamar `apps.ai.service.interpret_message` com o
+  contexto real, sem persistir, e conferir intenção/valor/categoria/datas e tokens.
 
 ### Soft delete
 - Transação desfeita não aparece em consultas nem totais.

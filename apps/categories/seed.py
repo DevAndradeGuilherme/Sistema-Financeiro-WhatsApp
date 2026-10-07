@@ -18,6 +18,7 @@ class SeedCategory:
     kind: str
     aliases: tuple[str, ...] = ()
     subcategories: tuple[tuple[str, tuple[str, ...]], ...] = field(default_factory=tuple)
+    is_fallback: bool = False
 
 
 EXPENSE = CategoryKind.EXPENSE
@@ -46,9 +47,11 @@ INITIAL_CATALOG: tuple[SeedCategory, ...] = (
     SeedCategory("Assinaturas", EXPENSE, ("streaming", "netflix", "spotify")),
     SeedCategory("Contas", EXPENSE, ("luz", "água", "internet", "telefone", "energia")),
     SeedCategory("Investimentos", EXPENSE, ("aporte", "poupança")),
-    SeedCategory("Outros gastos", EXPENSE),
+    SeedCategory("Outros gastos", EXPENSE, is_fallback=True),
     SeedCategory("Salário", INCOME, ("pagamento", "holerite")),
-    SeedCategory("Outras receitas", INCOME, ("rendimento", "reembolso", "freela")),
+    SeedCategory(
+        "Outras receitas", INCOME, ("rendimento", "reembolso", "freela"), is_fallback=True
+    ),
 )
 
 
@@ -77,4 +80,18 @@ def seed_categories(catalog: tuple[SeedCategory, ...] = INITIAL_CATALOG) -> dict
                 },
             )
             created["subcategories"] += int(sub_created)
+        if item.is_fallback:
+            _ensure_fallback(category)
     return created
+
+
+def _ensure_fallback(category: Category) -> None:
+    """Mark the seed fallback only if no fallback exists yet for its kind.
+
+    Never overrides an administrator's choice (another category already marked).
+    """
+    if Category.objects.filter(kind=category.kind, is_fallback=True).exists():
+        return
+    if category.is_active and category.kind != CategoryKind.BOTH:
+        category.is_fallback = True
+        category.save(update_fields=["is_fallback", "updated_at"])

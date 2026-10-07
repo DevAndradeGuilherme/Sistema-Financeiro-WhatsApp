@@ -50,15 +50,14 @@ Nomes de campo indicativos; o agent pode ajustar nomenclatura mantendo semântic
 | Campo | Tipo | Regras |
 |---|---|---|
 | `name` | varchar | `UNIQUE (lower(name))` |
-| `slug` | varchar | `UNIQUE`; chave estável no contrato com a IA; não mudar após uso |
+| `slug` | varchar | `UNIQUE`; chave estável usada pelo seed; não mudar após uso (a IA recebe o `id`) |
 | `kind` | varchar | `EXPENSE` \| `INCOME` \| `BOTH`; `CHECK` |
 | `description` | text | opcional |
 | `aliases` | `text[]` (ArrayField) | default vazio; normalizados (minúsculas, sem duplicatas) |
 | `is_active` | bool | default true |
 | `sort_order` | int | |
 | `created_at`, `updated_at` | timestamptz | |
-
-`is_fallback` (marcação explícita de fallback) será adicionado com a integração de IA.
+| `is_fallback` | bool | unique parcial `(kind) WHERE is_fallback`; `CHECK` fallback ativa e não `BOTH` |
 
 ### `categories.Subcategory`
 
@@ -109,7 +108,9 @@ queryset method nomeado (`.active()`).
 | `provider_timestamp` | timestamptz, null | horário da mensagem no provider |
 | `status` | varchar | `RECEIVED` \| `IGNORED` \| `READY` \| `PROCESSED` \| `FAILED`; `CHECK`; índice `(status, received_at)` |
 | `ignore_reason` | varchar | motivo de `IGNORED` (ver `WHATSAPP.md §4`) |
-| `error_code` | varchar | código interno, sem dados sensíveis |
+| `error_code` | varchar | código interno, sem dados sensíveis (`AI_*`, `REJECTED_*`, `REPLY_SEND_FAILED`, ...) |
+| `intent` | varchar | intenção interpretada (diagnóstico) |
+| `transaction` | FK Transaction, null | transação criada pela mensagem; `SET_NULL` |
 | `received_at`, `updated_at`, `processed_at` | timestamptz | |
 
 Payload bruto **não** é armazenado (contém `apikey` da instância e dados pessoais).

@@ -34,6 +34,12 @@ Revisores (Codex) devem usar este documento como checklist.
   Defesa principal é arquitetural (S1, validação Django, ausência de ferramentas com efeito).
 - Enviar à OpenAI só o mínimo necessário (ver `AI_CONTRACT.md §2`).
 - Nunca colocar segredos, IDs internos ou dados de terceiros no prompt.
+- Implementado: a IA recebe só texto, data/timezone e catálogo ativo; `store=False`; sem tools;
+  contrato sem campos de usuário/escopo; o usuário consultado é sempre o remetente
+  (`InboundMessage.user`); ids de categoria revalidados; totais só por selectors (SQL).
+  Testes cobrem "quanto a Maria gastou?" e payload com ids manipulados.
+- `OPENAI_API_KEY` nunca é logada nem persistida; logs da IA só têm métricas (modelo, intenção,
+  duração, tokens).
 
 ## 4. Segredos e configuração
 
@@ -67,7 +73,7 @@ Implementado no app `whatsapp`: segredo verificado antes do parse; `fromMe`, gru
 broadcast ignorados; remetente desconhecido não é criado nem recebe resposta; payload bruto
 (inclui `apikey` da instância enviada pela Evolution) não é persistido; logs só com
 `provider_message_id`, instância, tipo e status — nunca texto, telefone, API key ou segredo;
-`WHATSAPP_DEV_ECHO` proibido em produção; chamadas à Evolution sempre com timeout.
+chamadas à Evolution sempre com timeout.
 
 - HTTPS obrigatório (Nginx com TLS).
 - Limite de tamanho de corpo no Nginx e no Django.
