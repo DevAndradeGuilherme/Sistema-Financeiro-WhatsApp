@@ -2,7 +2,7 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 
-from apps.families.models import FamilyMember
+from apps.families.models import Family, FamilyMember
 from apps.families.policies import can_view_user_data
 from apps.families.selectors import get_membership
 from apps.families.services import add_family_member, create_family
@@ -22,6 +22,13 @@ def test_add_member(alice, bob):
     membership = add_family_member(family=family, user=bob)
     assert membership.role == FamilyMember.Role.MEMBER
     assert family.memberships.count() == 2
+
+
+def test_add_member_requires_existing_admin(bob):
+    family = Family.objects.create(name="Sem administrador")
+    with pytest.raises(ValidationError):
+        add_family_member(family=family, user=bob)
+    assert not family.memberships.exists()
 
 
 def test_user_belongs_to_at_most_one_family(alice, bob):

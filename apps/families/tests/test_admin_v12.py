@@ -2,7 +2,7 @@
 
 import pytest
 
-from apps.families.models import FamilyMember
+from apps.families.models import Family, FamilyMember
 from apps.families.services import add_family_member, create_family
 
 pytestmark = pytest.mark.django_db
@@ -59,6 +59,30 @@ def test_inline_rejects_two_admins_or_none(admin_client, family, alice, bob):
     assert FamilyMember.objects.get(role=ADMIN, family=family).user == alice
 
 
+def test_admin_rejects_family_without_admin(admin_client):
+    response = admin_client.post(
+        "/admin/families/family/add/",
+        {
+            "name": "Sem administrador",
+            "memberships-TOTAL_FORMS": "0",
+            "memberships-INITIAL_FORMS": "0",
+        },
+    )
+    assert response.status_code == 200
+    assert not Family.objects.filter(name="Sem administrador").exists()
+
+
+def test_standalone_cannot_add_member_to_family_without_admin(admin_client, family, make_user):
+    orphan = Family.objects.create(name="Família sem admin")
+    newcomer = make_user()
+    response = admin_client.post(
+        "/admin/families/familymember/add/",
+        {"family": orphan.pk, "user": newcomer.pk, "role": MEMBER},
+    )
+    assert response.status_code == 200
+    assert not FamilyMember.objects.filter(family=orphan).exists()
+
+
 def test_standalone_cannot_demote_admin(admin_client, family, alice):
     membership = FamilyMember.objects.get(user=alice)
     response = admin_client.post(
@@ -105,3 +129,13 @@ def test_cannot_delete_admin_while_members_remain(admin_client, family, alice, b
         f"/admin/families/familymember/{bob_m.pk}/delete/", {"post": "yes"}
     )
     assert response.status_code == 302
+
+
+def test_cannot_delete_only_admin_standalone(admin_client, alice):
+    family = create_family(name="Somente admin", admin=alice)
+    admin_m = FamilyMember.objects.get(user=alice)
+    response = admin_client.post(
+        f"/admin/families/familymember/{admin_m.pk}/delete/", {"post": "yes"}
+    )
+    assert response.status_code == 403
+    assert FamilyMember.objects.filter(family=family, role=ADMIN).count() == 1

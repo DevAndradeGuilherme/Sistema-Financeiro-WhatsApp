@@ -22,6 +22,13 @@ def add_family_member(
 ) -> FamilyMember:
     if FamilyMember.objects.filter(user=user).exists():
         raise ValidationError({"user": "Usuário já pertence a uma família."})
+    if (
+        role == FamilyMember.Role.MEMBER
+        and not FamilyMember.objects.filter(family=family, role=FamilyMember.Role.ADMIN).exists()
+    ):
+        raise ValidationError(
+            {"family": "A família precisa ter um administrador antes de receber membros."}
+        )
     membership = FamilyMember(family=family, user=user, role=role)
     membership.full_clean()  # also validates the single-ADMIN constraint
     membership.save()

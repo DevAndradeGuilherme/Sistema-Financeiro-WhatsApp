@@ -21,8 +21,11 @@ def to_decimal(value: Decimal | int | str) -> Decimal:
     elif isinstance(value, int):
         result = Decimal(value)
     elif isinstance(value, str):
+        normalized = value.strip()
+        if "e" in normalized.lower():
+            raise InvalidAmount("Valor monetário inválido.")
         try:
-            result = Decimal(value.strip())
+            result = Decimal(normalized)
         except InvalidOperation as exc:
             raise InvalidAmount("Valor monetário inválido.") from exc
     else:

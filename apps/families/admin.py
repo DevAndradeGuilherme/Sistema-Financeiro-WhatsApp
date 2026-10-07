@@ -21,12 +21,7 @@ class FamilyMemberInlineFormSet(BaseInlineFormSet):
             and not form.cleaned_data.get("DELETE")
             and form.cleaned_data.get("role") == ADMIN
         ]
-        if len(admins) > 1:
-            raise ValidationError("A família deve ter exatamente um administrador.")
-        has_members = any(
-            form.cleaned_data and not form.cleaned_data.get("DELETE") for form in self.forms
-        )
-        if has_members and not admins:
+        if len(admins) != 1:
             raise ValidationError("A família deve ter exatamente um administrador.")
 
 
@@ -77,6 +72,16 @@ class FamilyMemberForm(forms.ModelForm):
             moved = cleaned.get("family") is not None and cleaned["family"].pk != current.family_id
             if cleaned.get("role") != ADMIN or moved:
                 raise ValidationError(SWITCH_ADMIN_HINT)
+        family = cleaned.get("family")
+        role = cleaned.get("role")
+        if family is not None and role == FamilyMember.Role.MEMBER:
+            admins = family.memberships.filter(role=ADMIN)
+            if current.pk:
+                admins = admins.exclude(pk=current.pk)
+            if not admins.exists():
+                raise ValidationError(
+                    "A família precisa ter um administrador antes de receber membros."
+                )
         return cleaned
 
 
@@ -97,6 +102,6 @@ class FamilyMemberAdmin(admin.ModelAdmin):
         return actions
 
     def has_delete_permission(self, request, obj=None):
-        if obj is not None and obj.is_admin and obj.family.memberships.exclude(pk=obj.pk).exists():
+        if obj is not None and obj.is_admin:
             return False
         return super().has_delete_permission(request, obj)

@@ -6,6 +6,12 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Fixed — auditoria V1.0–V1.2
+- O service e o Django Admin de famílias não permitem mais criar/manter membros sem o ADMIN
+  obrigatório nem remover o último ADMIN isoladamente.
+- Strings monetárias em notação científica agora são rejeitadas na fronteira `to_decimal`.
+- Relatório resumido em `docs/AUDIT-1.md`; a validação real do fluxo MEMBER continua pendente.
+
 ### Added — V1.2: acesso financeiro familiar (ADMIN somente leitura)
 - Status: implementação e validação automatizada COMPLETE; validação real ADMIN COMPLETE;
   validação real MEMBER PENDING_LIVE_VALIDATION (sem segundo número físico).

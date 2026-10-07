@@ -40,7 +40,7 @@ def test_to_decimal_rejects_float_and_bool():
         to_decimal(True)
 
 
-@pytest.mark.parametrize("raw", ["abc", "NaN", "Infinity", "10,50"])
+@pytest.mark.parametrize("raw", ["abc", "NaN", "Infinity", "10,50", "1e3", "1E-2"])
 def test_to_decimal_rejects_invalid_strings(raw):
     with pytest.raises(InvalidAmount):
         to_decimal(raw)
