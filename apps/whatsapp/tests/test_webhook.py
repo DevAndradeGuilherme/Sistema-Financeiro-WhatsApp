@@ -178,9 +178,19 @@ def test_audio_is_routed_to_transcription(client, known_user, pipeline):
     pipeline.assert_not_called()
 
 
-def test_image_is_recognized_but_not_processed(client, known_user, pipeline):
-    record = _assert_ignored(post(client, payloads.image()), Reason.MEDIA_NOT_SUPPORTED)
-    assert record.message_type == MessageType.IMAGE
+def test_image_is_routed_to_receipt_processing(client, known_user, pipeline):
+    """V1.4: image from a known user is reserved (RECEIVED) and handed to the image handler
+    (download + Storage + vision, covered in test_image.py); the text pipeline is not called."""
+    with mock.patch("apps.whatsapp.views.handle_image_message") as handler:
+        response = post(client, payloads.image())
+    assert response.status_code == 200
+    record = InboundMessage.objects.get()
+    assert (record.message_type, record.status, record.user) == (
+        MessageType.IMAGE,
+        Status.RECEIVED,
+        known_user,
+    )
+    handler.assert_called_once()
     pipeline.assert_not_called()
 
 

@@ -98,6 +98,17 @@ chamadas à Evolution sempre com timeout.
   descartado após a transcrição; nenhum arquivo temporário; nada de mídia no banco ou em logs.
 - Filtros (fromMe, grupo, broadcast, remetente desconhecido/inativo) rodam antes do download.
 
+## 7.2 Imagens / comprovantes (V1.4)
+
+- Formato pelos bytes + Pillow; limite de bytes (`IMAGE_MAX_BYTES`) e de pixels
+  (`IMAGE_MAX_PIXELS`, checado no cabeçalho antes de decodificar; bomba de descompressão vira erro).
+- EXIF/GPS e metadados de texto removidos na regravação **antes** do Storage e da OpenAI.
+- Bucket privado; `SUPABASE_SERVICE_ROLE_KEY` só no backend (ignora RLS); paths opacos
+  (`receipts/AAAA/MM/<uuid>.<ext>`); sem URL pública ou assinada persistida; Admin só metadados.
+- Logs técnicos apenas (id, bytes, formato, dimensões, modelo, tokens, códigos) — nunca imagem,
+  base64, valores, descrição, CPF/CNPJ, chave Pix ou telefone.
+- Comprovante não é apagado por soft delete/undo; `RETENTION_POLICY = PENDING_PRODUCT_DECISION`.
+
 ## 8. Dados
 
 - Soft delete para transações; exclusão física apenas por processo administrativo documentado.
@@ -112,6 +123,7 @@ chamadas à Evolution sempre com timeout.
 - [ ] Alguma mutação sem registro em `TransactionChange` ou fora do `atomic` da mensagem?
 - [ ] Alguma leitura de terceiro sem passar por `transactions.scopes` (ex.: filtro por `user_id` vindo de fora)?
 - [ ] Alguma URL/caminho/nome de arquivo vindo de webhook usado para baixar ou gravar mídia?
+- [ ] Bucket ainda privado (`storage_check`)? Alguma URL pública/assinada persistida ou logada?
 - [ ] Idempotência garantida por constraint, não só por `if exists`?
 - [ ] Algum `float` em dinheiro?
 - [ ] Algum segredo, telefone completo ou payload bruto em log?

@@ -259,3 +259,67 @@ def parse_output(data: Any) -> Interpretation:
         reference=_reference(data["reference"]),
         updates=_updates(data["updates"]),
     )
+
+
+# --- Receipt images (V1.4) -------------------------------------------------------------------
+
+RECEIPT_CONTRACT_VERSION = "receipt-v1.4"
+DOCUMENT_TYPES = ("RECEIPT", "PAYMENT_PROOF", "INVOICE", "OTHER")
+RECEIPT_DIRECTIONS = ("EXPENSE", "INCOME", "UNKNOWN")
+CURRENCIES = ("BRL", "OTHER", "UNKNOWN")
+
+RECEIPT_SCHEMA: dict = _object(
+    {
+        "is_financial_document": {"type": "boolean"},
+        "document_type": {"type": "string", "enum": list(DOCUMENT_TYPES)},
+        "transaction_type": {"type": "string", "enum": list(RECEIPT_DIRECTIONS)},
+        "amount": _nullable("string"),
+        "currency": {"type": "string", "enum": list(CURRENCIES)},
+        "transaction_date": _nullable("string"),
+        "description": _nullable("string"),
+        "category_id": _nullable("integer"),
+        "subcategory_id": _nullable("integer"),
+    },
+    nullable=False,
+)
+
+
+@dataclass(frozen=True)
+class ReceiptExtraction:
+    """Untrusted proposal read from a receipt image. Django validates everything."""
+
+    is_financial_document: bool
+    document_type: str
+    transaction_type: str
+    amount: str | None
+    currency: str
+    transaction_date: str | None
+    description: str | None
+    category_id: int | None
+    subcategory_id: int | None
+
+    def __repr__(self) -> str:  # keep amounts/descriptions out of logs and tracebacks
+        return (
+            f"ReceiptExtraction(document_type={self.document_type!r}, "
+            f"transaction_type={self.transaction_type!r})"
+        )
+
+
+def parse_receipt(data: Any) -> ReceiptExtraction:
+    r = _Reader(data, RECEIPT_SCHEMA, "receipt")
+    document_type = r.text("document_type", DOCUMENT_TYPES)
+    direction = r.text("transaction_type", RECEIPT_DIRECTIONS)
+    currency = r.text("currency", CURRENCIES)
+    if document_type is None or direction is None or currency is None:
+        raise InvalidOutput("receipt enums are required")
+    return ReceiptExtraction(
+        is_financial_document=r.boolean("is_financial_document"),
+        document_type=document_type,
+        transaction_type=direction,
+        amount=r.text("amount"),
+        currency=currency,
+        transaction_date=r.text("transaction_date"),
+        description=r.text("description"),
+        category_id=r.integer("category_id"),
+        subcategory_id=r.integer("subcategory_id"),
+    )

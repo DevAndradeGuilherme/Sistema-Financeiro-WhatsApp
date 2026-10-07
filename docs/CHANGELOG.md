@@ -6,6 +6,19 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — V1.4: comprovantes por imagem
+- `common/images.py` (Pillow 12.3): formato pelos bytes, limites de bytes/pixels, EXIF/GPS removidos, SHA-256.
+- `common/storage.py`: cliente REST mínimo do Supabase Storage (bucket privado, sem sobrescrita);
+  comando `storage_check [--write-test]`.
+- `apps/ai/vision.py` + contrato `receipt-v1.4` (1 chamada de visão, `detail=high`, schema estrito).
+- `apps/whatsapp/image.py`, `actions.plan_receipt`, `ReceiptAttachment` (migration 0004) e
+  `pipeline.commit_plan` compartilhado por texto/áudio/imagem; transações `source=IMAGE`.
+- `EvolutionClient.download_media` (áudio e imagem pelo mesmo caminho seguro).
+
+### Changed
+- Imagem de usuário conhecido deixa de ser `IGNORED/MEDIA_NOT_SUPPORTED`.
+
+
 ### Added — V1.3: áudio → transcrição → pipeline textual
 - `apps/ai/transcription.py` (1 chamada, `language="pt"`, modelo `OPENAI_TRANSCRIPTION_MODEL`,
   timeout `OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS`, erros sanitizados, logs só com métricas).

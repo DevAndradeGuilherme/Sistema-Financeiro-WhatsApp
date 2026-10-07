@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import InboundMessage
+from .models import InboundMessage, ReceiptAttachment
 
 
 @admin.register(InboundMessage)
@@ -23,6 +23,34 @@ class InboundMessageAdmin(admin.ModelAdmin):
     list_select_related = ("user", "transaction")
     date_hierarchy = "received_at"
     readonly_fields = [field.name for field in InboundMessage._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ReceiptAttachment)
+class ReceiptAttachmentAdmin(admin.ModelAdmin):
+    """Metadata only (no image, no link, no signed URL). Read-only."""
+
+    list_display = (
+        "created_at",
+        "status",
+        "document_type",
+        "content_type",
+        "byte_size",
+        "transaction",
+        "error_code",
+    )
+    list_filter = ("status", "document_type", "content_type")
+    search_fields = ("id", "sha256", "inbound_message__provider_message_id")
+    list_select_related = ("transaction", "inbound_message")
+    readonly_fields = [field.name for field in ReceiptAttachment._meta.fields]
 
     def has_add_permission(self, request):
         return False

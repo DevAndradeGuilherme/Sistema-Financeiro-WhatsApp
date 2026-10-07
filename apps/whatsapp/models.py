@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -132,3 +134,73 @@ class ConversationContext(models.Model):
 
     def __str__(self) -> str:
         return f"Contexto de {self.user_id} até {self.expires_at:%H:%M}"
+
+
+class ReceiptAttachment(models.Model):
+    """Receipt/proof image received by WhatsApp and stored in the PRIVATE Supabase bucket.
+
+    Only metadata lives here: no bytes, no base64, no URL. ``storage_path`` is opaque
+    (``receipts/YYYY/MM/<uuid>.<ext>``) and never contains names, phones or file names.
+    One attachment per inbound message (one-to-one). Soft-deleting/undoing the transaction
+    keeps the attachment and the stored file (evidence); retention is a pending product
+    decision (see docs/DATABASE.md).
+    """
+
+    class Status(models.TextChoices):
+        STORED = "STORED", "Armazenado"  # uploaded; extraction pending or in progress
+        PROCESSED = "PROCESSED", "Processado"  # extraction answered (with or without a transaction)
+        FAILED = "FAILED", "Falhou"  # extraction failed after upload; file kept
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    inbound_message = models.OneToOneField(
+        InboundMessage,
+        on_delete=models.PROTECT,
+        related_name="receipt",
+        verbose_name="mensagem",
+    )
+    transaction = models.ForeignKey(
+        "transactions.Transaction",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="receipts",
+        verbose_name="transação",
+    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.STORED)
+    error_code = models.CharField("código de erro", max_length=50, blank=True)
+    document_type = models.CharField("tipo de documento", max_length=20, blank=True)
+    storage_bucket = models.CharField("bucket", max_length=100)
+    storage_path = models.CharField("caminho", max_length=255, unique=True)
+    content_type = models.CharField("tipo", max_length=30)
+    byte_size = models.PositiveIntegerField("bytes")
+    sha256 = models.CharField(max_length=64, db_index=True)
+    width = models.PositiveIntegerField("largura")
+    height = models.PositiveIntegerField("altura")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "comprovante"
+        verbose_name_plural = "comprovantes"
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["STORED", "PROCESSED", "FAILED"]),
+                name="receipt_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(content_type__in=["image/jpeg", "image/png", "image/webp"]),
+                name="receipt_content_type_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(storage_path__startswith="receipts/"),
+                name="receipt_storage_path_opaque",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(byte_size__gt=0),
+                name="receipt_byte_size_positive",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Comprovante {self.id} ({self.status})"

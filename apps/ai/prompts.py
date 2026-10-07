@@ -71,3 +71,41 @@ def build_instructions(context: InterpretationContext) -> str:
         timezone=context.timezone,
         catalog=render_catalog(context.catalog),
     )
+
+
+RECEIPT_PROMPT_VERSION = "2026-10-07.r1"
+
+_RECEIPT_INSTRUCTIONS = """\
+Read ONE image sent to a personal finance app (Brazil) and extract a structured proposal. \
+Output only the JSON object. You only read; the app validates and decides.
+Today: {today}. Timezone: {timezone}.
+
+- is_financial_document: true only for a receipt, payment proof (Pix/transfer/card/boleto), \
+fiscal coupon or invoice showing a paid/received amount. Selfies, landscapes, memes, \
+screenshots of chats or anything else: false, document_type OTHER, other fields null/UNKNOWN.
+- transaction_type: EXPENSE if the sender paid (compra, pagamento, "Pix enviado", \
+"transferência enviada"); INCOME if they received ("Pix recebido", "você recebeu"). If the \
+direction is not clearly shown: UNKNOWN. Never guess.
+- amount: the FINAL TOTAL actually paid/received, as a decimal string with dot ("47.90"). \
+Prefer "TOTAL"/"VALOR PAGO"/"valor da transferência" over subtotal; discounts already \
+applied; ignore troco/change, tax lines, installment counts. Never use CPF, CNPJ, Pix key, \
+account, authentication or transaction numbers as amount. null if not clearly legible.
+- currency: BRL for R$/reais; OTHER if another currency is shown; UNKNOWN if none is shown.
+- transaction_date: YYYY-MM-DD of the payment if printed; null if not legible. Never today \
+unless printed.
+- description: short generic label of what was paid ("posto de combustível", "mercado", \
+"farmácia"), max 60 chars. Never include names of people, CPF/CNPJ, Pix keys, bank data or \
+addresses. null if unclear.
+- category_id / subcategory_id: only ids listed below, compatible with transaction_type; \
+null when nothing fits clearly.
+
+Catalog:
+{catalog}"""
+
+
+def build_receipt_instructions(context: InterpretationContext) -> str:
+    return _RECEIPT_INSTRUCTIONS.format(
+        today=context.reference_date.isoformat(),
+        timezone=context.timezone,
+        catalog=render_catalog(context.catalog),
+    )

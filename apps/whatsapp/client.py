@@ -114,7 +114,15 @@ class EvolutionClient:
         return sent
 
     def download_audio(self, message_id: str, *, max_bytes: int) -> DownloadedMedia:
-        """Audio of a received message, via ``POST /chat/getBase64FromMediaMessage/{instance}``.
+        return self.download_media(message_id, media_type="audioMessage", max_bytes=max_bytes)
+
+    def download_image(self, message_id: str, *, max_bytes: int) -> DownloadedMedia:
+        return self.download_media(message_id, media_type="imageMessage", max_bytes=max_bytes)
+
+    def download_media(
+        self, message_id: str, *, media_type: str, max_bytes: int
+    ) -> DownloadedMedia:
+        """Media of a received message, via ``POST /chat/getBase64FromMediaMessage/{instance}``.
 
         Only the message id is sent: Evolution looks the message up in its own database and
         downloads/decrypts the media itself. No URL, media key or path from the webhook is
@@ -130,8 +138,8 @@ class EvolutionClient:
             body,
             max_response_bytes=_base64_length(max_bytes) + _JSON_OVERHEAD,
         )
-        if data.get("mediaType") != "audioMessage":
-            raise EvolutionResponseError("Media is not an audio message.")
+        if data.get("mediaType") != media_type:
+            raise EvolutionResponseError("Unexpected media type.")
         encoded = data.get("base64")
         if not isinstance(encoded, str) or not encoded.strip():
             raise EvolutionResponseError("Empty media.")

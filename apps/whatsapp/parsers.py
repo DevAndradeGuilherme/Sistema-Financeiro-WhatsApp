@@ -129,6 +129,11 @@ def _metadata(raw_type: str, message_type: str, content: dict) -> dict[str, str]
         if size is not None:
             metadata["declared_bytes"] = str(size)
         metadata["voice_note"] = "true" if audio.get("ptt") is True else "false"
+    if message_type == MessageType.IMAGE:
+        image = content.get("imageMessage") if isinstance(content.get("imageMessage"), dict) else {}
+        size = _non_negative_int(image.get("fileLength"))
+        if size is not None:
+            metadata["declared_bytes"] = str(size)
     return metadata
 
 

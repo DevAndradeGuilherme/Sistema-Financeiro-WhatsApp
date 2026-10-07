@@ -160,6 +160,14 @@ o Django busca **somente nas transações ativas do remetente**, com `transactio
 - Transações criadas antes da V1.1 não têm registro de criação e não são desfeitas.
 - Não há janela de tempo: a resposta sempre informa exatamente o que foi desfeito.
 
+### Comprovantes (V1.4)
+
+- Imagem de comprovante gera, no máximo, uma `create_transaction` do **próprio remetente**
+  (`source=IMAGE`), com as mesmas regras do texto. Nunca edita, consulta ou desfaz por imagem.
+- `ReceiptAttachment` liga a imagem armazenada (bucket privado) à mensagem e, se houver, à
+  transação. Soft delete / "desfazer" da transação **não** apaga o comprovante (evidência).
+- `RETENTION_POLICY = PENDING_PRODUCT_DECISION`: sem limpeza automática até decisão de produto.
+
 ### Auditoria
 
 `TransactionChange`: quem (`user`), qual transação, ação, `before`/`after` (somente campos

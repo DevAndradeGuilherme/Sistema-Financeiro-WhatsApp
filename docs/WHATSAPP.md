@@ -106,8 +106,8 @@ Classificação em `services.receive_message`, nesta ordem (resultado → `ignor
 4. Número não cadastrado → `UNKNOWN_SENDER`. **Usuário não é criado e não há resposta**
    (evita spam e enumeração de números). Cadastro continua no Django Admin.
 5. Usuário inativo → `INACTIVE_USER`.
-6. Áudio de usuário ativo → fica `RECEIVED` e segue para `audio.py` (V1.3, ver §7). Imagem →
-   `MEDIA_NOT_SUPPORTED` (V1.4). Os filtros 1–5 rodam antes: nada é baixado para mensagem ignorada.
+6. Áudio/imagem de usuário ativo → fica `RECEIVED` e segue para `audio.py` / `image.py` (§7).
+   Os filtros 1–5 rodam antes: nada é baixado para mensagem ignorada.
 7. Outros tipos → `UNSUPPORTED_TYPE`. Texto vazio → `EMPTY_TEXT`; > 4096 caracteres → `TEXT_TOO_LONG`.
 8. Texto de usuário ativo → `READY` (com `user` e `text`).
 
@@ -222,11 +222,35 @@ webhook (audioMessage de usuário ativo) → reserva (RECEIVED)
   READY é condicional (`status=RECEIVED`); depois vale a idempotência do pipeline textual.
 - **Respostas:** sempre texto (sem TTS).
 
-### Imagem — V1.4
+### Imagem / comprovante — V1.4 (implementado)
 
-`message_type=IMAGE` → download → upload em bucket **privado** do Supabase Storage
-(caminho sem dados pessoais legíveis) → extração multimodal estruturada → mesma validação
-→ confirmação com o usuário → `create_transaction` com `source=IMAGE`.
-O fluxo de confirmação exato será especificado na V1.4.
+```
+webhook (imageMessage de usuário ativo) → reserva (RECEIVED)
+  → tamanho declarado (dica) → download por id (mesmo endpoint do áudio, mediaType=imageMessage)
+  → common.images.normalize_image: formato pelos bytes (JPEG/PNG/WEBP/GIF estático), Pillow,
+    limite de pixels antes de decodificar, orientação EXIF aplicada, metadados (EXIF/GPS/texto)
+    removidos na regravação, SHA-256
+  → upload no bucket PRIVADO (receipts/AAAA/MM/<uuid>.<ext>, x-upsert=false) → ReceiptAttachment STORED
+  → 1 chamada de visão (OPENAI_VISION_MODEL, input_image data URL, detail=high, schema estrito)
+  → actions.plan_receipt (regras Django) → pipeline.commit_plan (create_transaction, source=IMAGE,
+    vínculo do anexo e PROCESSED no mesmo atomic) → resposta local
+```
+
+- **Registro direto, sem etapa de confirmação**: só cria quando tudo é inequívoco (documento
+  financeiro, direção, valor, BRL, data); o usuário pode desfazer com "desfazer". Casos incertos
+  respondem pedindo o dado em texto (sem conversa multimodal).
+- **Sem data impressa** → data de recebimento da mensagem no fuso de negócio; data ilegível/
+  inválida → não registra; data futura → recusada pelo service.
+- **Pix**: "enviado/pago" → EXPENSE; "recebido" → INCOME; direção não clara → "Esse comprovante é
+  de um valor pago ou recebido? Envie em texto...". Moeda ≠ BRL → não converte.
+- **Códigos**: `NOT_A_RECEIPT`, `AMOUNT_UNREADABLE`, `FOREIGN_CURRENCY`, `CURRENCY_UNCLEAR`,
+  `DIRECTION_UNCLEAR`, `DATE_UNREADABLE`, `REJECTED_*`, `IMAGE_*` (PROCESSED, sem efeito);
+  `IMAGE_DOWNLOAD_FAILED`, `STORAGE_<código>`, `VISION_<código>` (FAILED, sem efeito).
+- **Ordem**: Storage antes da visão (evidência preservada). Falha de upload → não chama visão.
+  Falha de visão após upload → anexo `FAILED`, arquivo mantido. Sem retry automático.
+- **Idempotência**: reentrega para na reserva (sem novo download/upload/visão);
+  `ReceiptAttachment.inbound_message` é one-to-one; a transação usa a mesma `idempotency_key`.
+- **Resposta**: "✅ Gasto registrado: R$ 47,90 em Alimentação. Comprovante armazenado." — nunca
+  URL do Storage; nenhuma imagem é enviada de volta.
 
 Toda mídia é entrada não confiável: validar MIME/tamanho, nunca executar nem renderizar.

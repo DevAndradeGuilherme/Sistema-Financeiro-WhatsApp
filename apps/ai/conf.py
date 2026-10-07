@@ -70,3 +70,34 @@ class TranscriptionConfig:
             model=_required("OPENAI_TRANSCRIPTION_MODEL"),
             timeout=timeout,
         )
+
+
+@dataclass(frozen=True)
+class VisionConfig:
+    api_key: str
+    model: str
+    timeout: float
+    reasoning_effort: str | None
+
+    def __repr__(self) -> str:  # never expose the API key
+        return f"VisionConfig(model={self.model!r}, timeout={self.timeout!r})"
+
+    @classmethod
+    def from_settings(cls) -> "VisionConfig":
+        try:
+            timeout = float(_required("OPENAI_VISION_TIMEOUT_SECONDS"))
+        except ValueError as exc:
+            raise ImproperlyConfigured("OPENAI_VISION_TIMEOUT_SECONDS must be a number.") from exc
+        if timeout <= 0:
+            raise ImproperlyConfigured("OPENAI_VISION_TIMEOUT_SECONDS must be positive.")
+        effort = (getattr(settings, "OPENAI_REASONING_EFFORT", None) or "").strip() or None
+        if effort is not None and effort not in REASONING_EFFORTS:
+            raise ImproperlyConfigured(
+                f"OPENAI_REASONING_EFFORT must be one of {sorted(REASONING_EFFORTS)} or empty."
+            )
+        return cls(
+            api_key=_required("OPENAI_API_KEY"),
+            model=_required("OPENAI_VISION_MODEL"),
+            timeout=timeout,
+            reasoning_effort=effort,
+        )

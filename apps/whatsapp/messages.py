@@ -34,6 +34,25 @@ AUDIO_TOO_LARGE = "Esse áudio é muito grande. Envie um áudio mais curto."
 AUDIO_DOWNLOAD_FAILED = "Não consegui acessar esse áudio. Tente enviar novamente."
 AUDIO_NOT_UNDERSTOOD = "Não consegui entender o áudio. Pode repetir ou enviar por texto?"
 AUDIO_UNSUPPORTED = "Não consegui processar esse formato de áudio. Envie uma mensagem de voz."
+NOT_A_RECEIPT = "Não consegui identificar um comprovante ou recibo nessa imagem."
+RECEIPT_AMOUNT_UNREADABLE = (
+    "Identifiquei um comprovante, mas não consegui ler o valor com segurança."
+)
+RECEIPT_FOREIGN_CURRENCY = (
+    "Identifiquei um valor em outra moeda, mas essa versão registra apenas valores em reais."
+)
+RECEIPT_CURRENCY_UNCLEAR = (
+    "Identifiquei um comprovante, mas não consegui confirmar que o valor está em reais."
+)
+RECEIPT_DIRECTION_UNCLEAR = (
+    "Esse comprovante é de um valor pago ou recebido? Envie em texto, por exemplo: "
+    "'paguei 50 reais' ou 'recebi 50 reais'."
+)
+RECEIPT_DATE_UNREADABLE = "Identifiquei um comprovante, mas não consegui ler a data com segurança."
+IMAGE_TOO_LARGE = "Essa imagem é muito grande. Envie uma foto ou print menor."
+IMAGE_INVALID = "Não consegui abrir essa imagem. Envie uma foto ou print em JPG ou PNG."
+IMAGE_DOWNLOAD_FAILED = "Não consegui acessar essa imagem. Tente enviar novamente."
+RECEIPT_STORED_SUFFIX = " Comprovante armazenado."
 ADMIN_ONLY = "Essa consulta está disponível apenas para o administrador da família."
 NO_FAMILY = "Você ainda não faz parte de uma família cadastrada."
 MEMBER_NOT_FOUND = "Não encontrei esse membro na sua família."

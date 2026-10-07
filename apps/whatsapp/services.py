@@ -36,10 +36,17 @@ class InboundResult:
 
     @property
     def needs_transcription(self) -> bool:
+        return self._pending_media(MessageType.AUDIO)
+
+    @property
+    def needs_image_processing(self) -> bool:
+        return self._pending_media(MessageType.IMAGE)
+
+    def _pending_media(self, message_type: str) -> bool:
         return (
             not self.duplicate
             and self.record.status == Status.RECEIVED
-            and self.record.message_type == MessageType.AUDIO
+            and self.record.message_type == message_type
             and self.record.user_id is not None
         )
 
@@ -104,13 +111,12 @@ def _classify(record: InboundMessage, message: NormalizedMessage) -> None:
     if not user.is_active:
         return _ignore(record, Reason.INACTIVE_USER)
 
-    if message.message_type == MessageType.AUDIO:
+    if message.message_type in (MessageType.AUDIO, MessageType.IMAGE):
         # Filters above already ran (fromMe, group, broadcast, unknown/inactive sender), so no
-        # download happens for messages that would be ignored. Stays RECEIVED until transcribed.
+        # download happens for messages that would be ignored. Stays RECEIVED until the media
+        # handler (audio.py / image.py) finishes.
         record.save(update_fields=["sender_phone", "user", "updated_at"])
         return None
-    if message.message_type == MessageType.IMAGE:
-        return _ignore(record, Reason.MEDIA_NOT_SUPPORTED)  # V1.4
     if message.message_type != MessageType.TEXT:
         return _ignore(record, Reason.UNSUPPORTED_TYPE)
 

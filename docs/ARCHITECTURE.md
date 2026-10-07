@@ -110,8 +110,9 @@ Essa mudança exige registro na seção 8.
 ```
 Áudio (V1.3 ✅): Evolution → download (por id, autenticado) → transcrição (1 chamada) → texto
         → READY → passo 5 em diante (mesmo pipeline; `whatsapp/audio.py`, `ai/transcription.py`)
-Imagem: Evolution → download → (Supabase Storage) → extração multimodal estruturada
-        → mesma validação Django → mesmo transactions.services.create_transaction
+Imagem (V1.4 ✅): Evolution → download (por id) → normalização Pillow (sem EXIF) → Storage
+        privado → 1 chamada de visão (schema estrito) → actions.plan_receipt → pipeline.commit_plan
+        → mesmo transactions.services.create_transaction (`whatsapp/image.py`, `ai/vision.py`)
 ```
 
 Proibido criar regras financeiras paralelas para áudio ou imagem. O que muda é apenas
@@ -191,3 +192,7 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-07 — Download de mídia só por id via `getBase64FromMediaMessage` (Evolution consulta o próprio banco) — nenhuma URL do webhook é acessada.
 - 2026-10-07 — OGG/Opus enviado sem conversão (aceito pela API, validado ao vivo) — sem ffmpeg; formato detectado pelos bytes.
 - 2026-10-07 — Áudio aguardando transcrição permanece `RECEIVED`; rejeições de limite usam `PROCESSED` + código — sem novos estados nem migration.
+- 2026-10-07 — Imagem = transporte: `image.py` + `ai.vision` (1 chamada, `detail=high`) + `actions.plan_receipt`, gravando pelo mesmo `pipeline.commit_plan` — sem segundo domínio.
+- 2026-10-07 — Pillow (dependência nova) só para validar/normalizar e remover metadados; sem OCR local.
+- 2026-10-07 — Cliente Storage próprio com stdlib (4 chamadas REST) em vez do SDK Supabase completo; bucket privado, service role só no backend.
+- 2026-10-07 — Comprovante: registro direto quando inequívoco (sem confirmação), com "desfazer" disponível; incerteza → pede dado em texto.

@@ -1,6 +1,6 @@
 # Roadmap
 
-Versão atual: **V1.3 concluída** (áudio validado ponta a ponta em DEV, 2026-10-07).
+Versão atual: **V1.4 concluída** (comprovantes por imagem validados ponta a ponta em DEV, 2026-10-07).
 V1.2: validação real do fluxo MEMBER segue `PENDING_LIVE_VALIDATION` (ver status da V1.2).
 Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
 produção **não** está pronta.
@@ -68,8 +68,13 @@ família gastou esse mês?" (negar) e "quanto <ADMIN> gastou esse mês?" (negar)
 
 ## V1.4 — Imagens
 
-- Comprovantes e recibos; armazenamento em Supabase Storage (bucket privado).
-- Extração multimodal estruturada; confirmação e registro pelo mesmo domínio financeiro.
+- [x] Comprovantes, recibos, cupons e Pix (JPEG/PNG/WEBP/GIF estático; PDF fora do escopo).
+- [x] Armazenamento em Supabase Storage privado, sem EXIF; `ReceiptAttachment` com metadados.
+- [x] Extração por visão (1 chamada, schema estrito) + validação Django + `create_transaction`
+  (`source=IMAGE`); registro direto quando inequívoco, "desfazer" disponível.
+- [x] Validação real (2026-10-07): recibo de despesa, Pix enviado e imagem não financeira pelo WhatsApp
+  (Pix recebido validado por smoke sintético e testes).
+- RETENTION_POLICY = PENDING_PRODUCT_DECISION.
 
 ## V1.5 — Análises
 

@@ -181,6 +181,26 @@ Nunca: API key, prompt, texto da mensagem, objeto estruturado.
 - Validado ao vivo com `gpt-transcribe`: OGG/Opus aceito diretamente; uso reportado por duração
   (`usage.seconds`); ~0,8–2 s por áudio curto.
 
+## 7.2 Leitura de comprovantes (V1.4)
+
+- `apps/ai/vision.extract_receipt(image, content_type, context)`: Responses API, **1 chamada**,
+  `input_image` com data URL da imagem já normalizada (sem URL pública/Storage, sem chaves),
+  `detail="high"` (suficiente para texto pequeno nos testes; `original` não é usado),
+  `store=False`, schema estrito, sem tools, `OPENAI_VISION_MODEL` / `OPENAI_VISION_TIMEOUT_SECONDS`
+  (+ `OPENAI_REASONING_EFFORT` opcional). Sem OCR separado.
+- Schema `receipt-v1.4`: `is_financial_document` (bool), `document_type` (`RECEIPT`,
+  `PAYMENT_PROOF`, `INVOICE`, `OTHER`), `transaction_type` (`EXPENSE`, `INCOME`, `UNKNOWN`),
+  `amount` (string decimal|null — o **total final**), `currency` (`BRL`, `OTHER`, `UNKNOWN`),
+  `transaction_date`, `description` (rótulo genérico, sem nomes/CPF/CNPJ/chaves), `category_id`,
+  `subcategory_id`. Não há campo de favorecido/pagador.
+- Instruções: total final em vez de subtotal; desconto já aplicado; ignorar troco; nunca usar
+  CPF, CNPJ, chave Pix, conta, autenticação ou id de transação como valor; direção do Pix só se
+  explícita; não inventar data.
+- Django revalida tudo (`actions.plan_receipt` + `create_transaction`); ver `WHATSAPP.md §7`.
+- Validado ao vivo (`gpt-6-luna`, effort `none`) com comprovantes sintéticos: total escolhido em
+  cupom com subtotal/desconto/troco/CPF/CNPJ; Pix enviado/recebido; USD, paisagem e Pix ambíguo
+  recusados. ~1.400–1.600 tokens de entrada (imagem incluída), ~50–70 de saída, 2–5 s.
+
 ## 8. Testes
 
 Unitários com cliente fake (`apps/ai/tests`); integração do pipeline com `interpret_message`

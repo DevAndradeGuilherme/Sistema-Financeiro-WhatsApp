@@ -30,7 +30,7 @@ from .services import mark_failed
 logger = logging.getLogger(__name__)
 
 Status = InboundMessage.Status
-_SOURCES = {MessageType.AUDIO: TransactionSource.AUDIO}
+_SOURCES = {MessageType.AUDIO: TransactionSource.AUDIO, MessageType.IMAGE: TransactionSource.IMAGE}
 REPLY_SEND_FAILED = "REPLY_SEND_FAILED"
 
 
@@ -82,13 +82,29 @@ def _commit(
 ) -> "actions.Outcome | None":
     """Validate, then run the effect and mark PROCESSED in one transaction."""
     plan = actions.plan(interpretation, user=record.user, today=today, has_context=has_context)
+    return commit_plan(record, plan, today)
+
+
+def commit_plan(
+    record: InboundMessage,
+    plan: "actions.Plan",
+    today,
+    *,
+    expected_status: str = Status.READY,
+    after_effect=None,
+) -> "actions.Outcome | None":
+    """Run ``plan`` and mark the message PROCESSED atomically (shared by text/audio/image).
+
+    The message row is locked and must still be in ``expected_status``; otherwise nothing runs.
+    ``after_effect(locked, outcome)`` runs inside the same transaction (e.g. link a receipt).
+    """
     with transaction.atomic():
         locked = (
             InboundMessage.objects.select_for_update(of=("self",))
             .select_related("user")
             .get(pk=record.pk)
         )
-        if locked.status != Status.READY:
+        if locked.status != expected_status:
             logger.info(
                 "pipeline.skipped provider_message_id=%s processing_status=%s",
                 locked.provider_message_id,
@@ -104,6 +120,8 @@ def _commit(
         )
         if outcome.query_context is not None:
             conversation.remember_query(locked.user, outcome.query_context)
+        if after_effect is not None:
+            after_effect(locked, outcome)
         locked.status = Status.PROCESSED
         locked.intent = outcome.intent
         locked.error_code = outcome.code

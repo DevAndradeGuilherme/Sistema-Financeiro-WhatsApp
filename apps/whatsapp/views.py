@@ -18,6 +18,7 @@ from django.views.decorators.http import require_POST
 
 from . import conf
 from .audio import handle_audio_message
+from .image import handle_image_message
 from .parsers import InvalidPayload, parse_evolution_event
 from .pipeline import handle_ready_message
 from .services import mark_failed, receive_message
@@ -80,6 +81,13 @@ def evolution_webhook(request: HttpRequest) -> JsonResponse:
         except Exception:
             logger.exception("webhook.audio_error event=%s", event.event)
             mark_failed(result.record, "AUDIO_PIPELINE_ERROR")
+        result.record.refresh_from_db(fields=["status"])
+    elif result.needs_image_processing:
+        try:
+            handle_image_message(result.record, event.message)
+        except Exception:
+            logger.exception("webhook.image_error event=%s", event.event)
+            mark_failed(result.record, "IMAGE_PIPELINE_ERROR")
         result.record.refresh_from_db(fields=["status"])
 
     return JsonResponse({"status": result.record.status.lower()})

@@ -29,6 +29,7 @@ from apps.ai.contract import (
     CatalogSubcategory,
     Interpretation,
     InterpretationContext,
+    ReceiptExtraction,
     TransactionReference,
 )
 from apps.categories.models import Category, Subcategory
@@ -260,6 +261,53 @@ def _resolve_for_create(
         if category is None:
             raise ImproperlyConfigured(f"No active fallback category for {transaction_type}.")
     return category, subcategory
+
+
+# --- RECEIPT IMAGE (V1.4) ------------------------------------------------------------------
+
+
+def plan_receipt(extraction: ReceiptExtraction, *, message_date: date) -> Plan:
+    """Validated CreatePlan from a receipt proposal, or a reply explaining why not.
+
+    Creation needs, all checked here (the service re-validates again): a recognized financial
+    document, a clear direction (EXPENSE/INCOME), a legible amount, BRL, a valid/fallback
+    category and a valid date. Missing printed date → the date the message was received
+    (documented rule); an unreadable/invalid printed date is not guessed.
+    """
+    intent = "CREATE_TRANSACTION"
+    e = extraction
+    if not e.is_financial_document or e.document_type == "OTHER":
+        return ReplyPlan(intent, messages.NOT_A_RECEIPT, "NOT_A_RECEIPT")
+    if e.currency == "OTHER":
+        return ReplyPlan(intent, messages.RECEIPT_FOREIGN_CURRENCY, "FOREIGN_CURRENCY")
+    if e.amount is None:
+        return ReplyPlan(intent, messages.RECEIPT_AMOUNT_UNREADABLE, "AMOUNT_UNREADABLE")
+    if e.currency != "BRL":
+        return ReplyPlan(intent, messages.RECEIPT_CURRENCY_UNCLEAR, "CURRENCY_UNCLEAR")
+    if e.transaction_type not in TransactionType.values:
+        return ReplyPlan(intent, messages.RECEIPT_DIRECTION_UNCLEAR, "DIRECTION_UNCLEAR")
+    try:
+        amount = to_decimal(e.amount)
+    except InvalidAmount:
+        return ReplyPlan(intent, messages.RECEIPT_AMOUNT_UNREADABLE, "AMOUNT_UNREADABLE")
+
+    if e.transaction_date is None:
+        transaction_date = message_date
+    else:
+        transaction_date = _parse_date(e.transaction_date)
+        if transaction_date is None:
+            return ReplyPlan(intent, messages.RECEIPT_DATE_UNREADABLE, "DATE_UNREADABLE")
+
+    category, subcategory = _resolve_for_create(e.transaction_type, e.category_id, e.subcategory_id)
+    return CreatePlan(
+        intent=intent,
+        type=e.transaction_type,
+        amount=amount,  # zero/negative/limit/2-decimals enforced by create_transaction
+        category=category,
+        subcategory=subcategory,
+        description=(e.description or "")[:MAX_DESCRIPTION],
+        transaction_date=transaction_date,
+    )
 
 
 # --- QUERY -------------------------------------------------------------------------------

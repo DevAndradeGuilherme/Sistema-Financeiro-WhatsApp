@@ -52,9 +52,9 @@ def handle_audio_message(record: InboundMessage, message: NormalizedMessage) -> 
     declared_seconds = _int(message.metadata.get("declared_seconds"))
     declared_bytes = _int(message.metadata.get("declared_bytes"))
     if declared_seconds is not None and declared_seconds > settings.AUDIO_MAX_SECONDS:
-        return _reject(record, "AUDIO_TOO_LONG", messages.AUDIO_TOO_LARGE)
+        return reject_media(record, "AUDIO_TOO_LONG", messages.AUDIO_TOO_LARGE)
     if declared_bytes is not None and declared_bytes > settings.AUDIO_MAX_BYTES:
-        return _reject(record, "AUDIO_TOO_LARGE", messages.AUDIO_TOO_LARGE)
+        return reject_media(record, "AUDIO_TOO_LARGE", messages.AUDIO_TOO_LARGE)
 
     started = time.monotonic()
     try:
@@ -62,7 +62,7 @@ def handle_audio_message(record: InboundMessage, message: NormalizedMessage) -> 
             record.provider_message_id, max_bytes=settings.AUDIO_MAX_BYTES
         )
     except MediaTooLargeError:
-        return _reject(record, "AUDIO_TOO_LARGE", messages.AUDIO_TOO_LARGE)
+        return reject_media(record, "AUDIO_TOO_LARGE", messages.AUDIO_TOO_LARGE)
     except (EvolutionError, ValueError) as exc:
         logger.warning(
             "audio.download_failed provider_message_id=%s error=%s",
@@ -85,7 +85,7 @@ def handle_audio_message(record: InboundMessage, message: NormalizedMessage) -> 
         declared_seconds if declared_seconds is not None else "-",
     )
     if audio_format is None:
-        return _reject(record, "AUDIO_UNSUPPORTED_FORMAT", messages.AUDIO_UNSUPPORTED)
+        return reject_media(record, "AUDIO_UNSUPPORTED_FORMAT", messages.AUDIO_UNSUPPORTED)
 
     try:
         transcript = transcribe_audio(
@@ -96,7 +96,7 @@ def handle_audio_message(record: InboundMessage, message: NormalizedMessage) -> 
         )
     except AIError as exc:
         if exc.code in ("EMPTY_TRANSCRIPT", "EMPTY_AUDIO"):
-            return _reject(record, exc.code, messages.AUDIO_NOT_UNDERSTOOD)
+            return reject_media(record, exc.code, messages.AUDIO_NOT_UNDERSTOOD)
         mark_failed(record, f"TRANSCRIPTION_{exc.code}"[:50])
         send_reply(record, messages.TECHNICAL_ERROR)
         return
@@ -104,7 +104,7 @@ def handle_audio_message(record: InboundMessage, message: NormalizedMessage) -> 
         del media  # drop the audio bytes as soon as possible
 
     if len(transcript.text) > MAX_TEXT_LENGTH:
-        return _reject(record, "TRANSCRIPT_TOO_LONG", messages.AUDIO_TOO_LARGE)
+        return reject_media(record, "TRANSCRIPT_TOO_LONG", messages.AUDIO_TOO_LARGE)
 
     promoted = InboundMessage.objects.filter(pk=record.pk, status=Status.RECEIVED).update(
         text=transcript.text, status=Status.READY, updated_at=timezone.now()
@@ -115,8 +115,11 @@ def handle_audio_message(record: InboundMessage, message: NormalizedMessage) -> 
     handle_ready_message(record)
 
 
-def _reject(record: InboundMessage, code: str, reply: str) -> None:
-    """Answered without any effect (same semantics as other rejections: PROCESSED + code)."""
+def reject_media(record: InboundMessage, code: str, reply: str) -> None:
+    """Answered without any effect (same semantics as other rejections: PROCESSED + code).
+
+    Shared by audio and image handlers; only acts while the message is still RECEIVED.
+    """
     updated = InboundMessage.objects.filter(pk=record.pk, status=Status.RECEIVED).update(
         status=Status.PROCESSED,
         error_code=code[:50],
