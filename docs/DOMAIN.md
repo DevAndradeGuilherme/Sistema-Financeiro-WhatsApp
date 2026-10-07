@@ -47,9 +47,14 @@ Transaction N ── 0..1 Subcategory
   Antes disso, todo usuário opera como se estivesse sozinho.
 - `Transaction.family` registra a família do dono **no momento da criação**; é derivada pelo
   service a partir do membership, nunca escolhida livremente.
-- Visibilidade familiar (V1.2) usa a regra mais restritiva: o ADMIN só vê transações cuja
-  `family` é a sua **e** cujo dono ainda é membro dela. Se um membro sai, o ADMIN deixa de ver
-  as transações dele. "Dono" é sempre `Transaction.user`; ADMIN nunca é dono de dados alheios.
+- Visibilidade familiar (V1.2, implementada) segue o **snapshot histórico**: dado familiar é
+  toda transação com `Transaction.family == família` (registrada enquanto o dono era membro).
+  Pertencer à família hoje **não** dá acesso a transações registradas antes de entrar (sem
+  `family`) nem às registradas em outra família; quem sai continua no histórico da família
+  antiga e não leva esse histórico para a nova. Consulta por membro (`FAMILY_MEMBER`) exige que
+  ele seja membro **atual** e lê só `user=membro AND family=família`.
+  (Substitui a regra provisória da V1.0 "e cujo dono ainda é membro".)
+- "Dono" é sempre `Transaction.user`; o ADMIN nunca é dono de dados alheios.
 
 ### Category e Subcategory (`categories`)
 
@@ -127,7 +132,7 @@ No código, o dono é o campo `user`. `source ∈ {TEXT, AUDIO, IMAGE, MANUAL, A
 | Operação | Versão | Regra |
 |---|---|---|
 | Criar | V1.0 | Ator vira dono (`user`). Idempotente por `idempotency_key`. Gera `TransactionChange(CREATE)`. |
-| Consultar | V1.0/V1.1 (próprias), V1.2 (família) | Sempre via selector com o remetente como `user`. |
+| Consultar | V1.0/V1.1 (próprias), V1.2 ✅ (família, ADMIN) | Via selector com `user=` remetente ou `scope=` autorizado (seção 6). |
 | Editar | V1.1 ✅ | `update_transaction`: só o dono, só transação ativa. Campos: valor, descrição, categoria, subcategoria, data. **Nunca**: dono, família, tipo, origem, ids. Revalida as regras da seção 3. Gera `UPDATE` com antes/depois. |
 | Desfazer | V1.1 ✅ | `undo_last_change`: ver abaixo. Gera `UNDO`. |
 | Soft delete | V1.0 | `deleted_at`; some de consultas e totais. Gera `DELETE`. Sem exclusão física pelo canal. |
@@ -163,26 +168,37 @@ mensagem>`, que identifica a `InboundMessage`). Somente leitura no Admin.
 
 ## 6. Autorização
 
-Implementada em `policies.py` (Django). **Nunca** derivada de campos retornados pela IA.
+Implementada no Django. **Nunca** derivada de campos retornados pela IA.
+**Family ADMIN = somente leitura sobre terceiros.**
 
 | Ação | Próprias | De outro membro (sou MEMBER) | De outro membro (sou Family ADMIN) | Fora da família |
 |---|---|---|---|---|
 | Criar | ✅ | ❌ (não existe criar em nome de outro) | ❌ | ❌ |
-| Consultar/agregar | ✅ | ❌ | ✅ (somente leitura) | ❌ |
-| Consolidado da família | — | ❌ | ✅ | ❌ |
+| Consultar/agregar | ✅ | ❌ | ✅ (somente leitura, snapshot histórico) | ❌ |
+| Consolidado / ranking da família | — | ❌ | ✅ | ❌ |
 | Editar | ✅ | ❌ | ❌ | ❌ |
 | Desfazer/excluir | ✅ | ❌ | ❌ | ❌ |
 
-Funções de referência:
+Peças (V1.2):
 
-- `can_view_user_data(actor, target_user) -> bool`: `actor == target_user` ou
-  (ambos na mesma família e `actor` é ADMIN dela).
-- `can_view_family(actor, family) -> bool`: `actor` é ADMIN da família.
-- `can_modify_transaction(actor, transaction) -> bool`: `transaction.user == actor` (dono).
-  Usada por `update_transaction`, `undo_last_change` e `soft_delete_transaction`.
+- `families.policies.can_view_family(actor, family)`: `actor` é o ADMIN **atual** da família.
+- `transactions.scopes`: única forma de obter um `ReadScope` (`SELF`, `FAMILY`,
+  `FAMILY_MEMBER`); aplica a policy a cada consulta; membro resolvido por nome
+  (`families.selectors.find_family_members_by_name`) **somente** entre os membros atuais da
+  família do ADMIN, sem diferenciar acentos/maiúsculas, por nome completo, primeiro nome ou
+  username. Nome que casa com mais de um membro → pede o nome completo, nunca escolhe.
+  Autorização é verificada **antes** de resolver nomes (MEMBER nunca descobre quem existe).
+- Selectors de leitura recebem `user=` (próprios dados) ou `scope=` (autorizado). Não existe
+  selector por `user_id` arbitrário.
+- `transactions.policies.can_modify_transaction(actor, transaction)`: só o dono. Usada por
+  `update_transaction`, `undo_last_change` e `soft_delete_transaction`. Não existem services de
+  criação/edição/exclusão/desfazer em nome de terceiros.
+- Papel é revalidado a cada mensagem; contexto conversacional guarda semântica, nunca permissão.
 
-Negação de acesso gera resposta neutra ("Você não tem permissão para consultar esses dados"),
-sem revelar se o alvo existe.
+Respostas de negação são locais e discretas (`whatsapp/messages.py`): "Essa consulta está
+disponível apenas para o administrador da família.", "Você ainda não faz parte de uma família
+cadastrada.", "Não encontrei esse membro na sua família.", "Você só pode registrar transações na
+sua própria conta.", "Você só pode alterar suas próprias transações."
 
 ## 7. Identificação no canal
 

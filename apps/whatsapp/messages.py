@@ -30,6 +30,28 @@ NOTHING_TO_UPDATE = "Não identifiquei o que alterar. Exemplo: 'muda o último g
 NOT_FOUND = "Não encontrei esse lançamento. Pode informar o valor ou a data?"
 NOTHING_TO_UNDO = "Não encontrei nenhuma ação recente para desfazer."
 NO_CHANGE = "Nada foi alterado: o lançamento já tem esses valores."
+ADMIN_ONLY = "Essa consulta está disponível apenas para o administrador da família."
+NO_FAMILY = "Você ainda não faz parte de uma família cadastrada."
+MEMBER_NOT_FOUND = "Não encontrei esse membro na sua família."
+OWN_ACCOUNT_ONLY = "Você só pode registrar transações na sua própria conta."
+OWN_CHANGES_ONLY = "Você só pode alterar suas próprias transações."
+
+# ``who`` in the functions below: None = the sender ("Você"), FAMILY = the whole family,
+# any other string = a family member's display name.
+FAMILY = "__family__"
+
+
+def member_ambiguous(name: str | None) -> str:
+    who = f" chamado {name}" if name else ""
+    return f"Encontrei mais de um membro{who} na família. Pode informar o nome completo?"
+
+
+def _subject(who: str | None) -> str:
+    return "Você" if who is None else ("A família" if who == FAMILY else who)
+
+
+def _of(who: str | None) -> str:
+    return "" if who is None else (" da família" if who == FAMILY else f" de {who}")
 
 
 def rejected(reason: str) -> str:
@@ -52,18 +74,35 @@ def transaction_created(
 
 
 def total(
-    *, is_income: bool, value: Decimal, scope: str | None, start: date, end: date, today: date
+    *,
+    is_income: bool,
+    value: Decimal,
+    scope: str | None,
+    start: date,
+    end: date,
+    today: date,
+    who: str | None = None,
 ) -> str:
     verb = "recebeu" if is_income else "gastou"
     preposition = "em" if is_income else "com"
     scope_text = f" {preposition} {scope}" if scope else ""
-    return f"Você {verb} {format_brl(value)}{scope_text} {describe_period(start, end, today)}."
-
-
-def balance(*, income: Decimal, expense: Decimal, start: date, end: date, today: date) -> str:
     period = describe_period(start, end, today)
+    return f"{_subject(who)} {verb} {format_brl(value)}{scope_text} {period}."
+
+
+def balance(
+    *,
+    income: Decimal,
+    expense: Decimal,
+    start: date,
+    end: date,
+    today: date,
+    who: str | None = None,
+) -> str:
+    period = describe_period(start, end, today)
+    owner = "Seu saldo" if who is None else f"O saldo{_of(who)}"
     return (
-        f"Seu saldo {period} é {format_brl(income - expense)} "
+        f"{owner} {period} é {format_brl(income - expense)} "
         f"(entradas {format_brl(income)}; gastos {format_brl(expense)})."
     )
 
@@ -124,21 +163,46 @@ def ranked(title: str, rows: list[tuple[str, Decimal]]) -> str:
     return NEWLINE.join([title, *lines])
 
 
-def top_expenses(rows: list[tuple[str, Decimal]], *, start: date, end: date, today: date) -> str:
+def top_expenses(
+    rows: list[tuple[str, Decimal]],
+    *,
+    start: date,
+    end: date,
+    today: date,
+    who: str | None = None,
+) -> str:
     period = describe_period(start, end, today)
     if not rows:
-        return f"Não encontrei gastos {period}."
-    return ranked(f"Seus maiores gastos {period}:", rows)
+        return f"Não encontrei gastos{_of(who)} {period}."
+    if who is None:
+        return ranked(f"Seus maiores gastos {period}:", rows)
+    return ranked(f"Maiores gastos{_of(who)} {period}:", rows)
 
 
 def breakdown(
+    rows: list[tuple[str, Decimal]],
+    *,
+    is_income: bool,
+    start: date,
+    end: date,
+    today: date,
+    who: str | None = None,
+) -> str:
+    period = describe_period(start, end, today)
+    noun = "receitas" if is_income else "gastos"
+    if not rows:
+        return f"Não encontrei {noun}{_of(who)} {period}."
+    return ranked(f"{noun.capitalize()}{_of(who)} por categoria {period}:", rows)
+
+
+def ranking(
     rows: list[tuple[str, Decimal]], *, is_income: bool, start: date, end: date, today: date
 ) -> str:
     period = describe_period(start, end, today)
     noun = "receitas" if is_income else "gastos"
     if not rows:
-        return f"Não encontrei {noun} {period}."
-    return ranked(f"{noun.capitalize()} por categoria {period}:", rows)
+        return f"Não encontrei {noun} da família {period}."
+    return ranked(f"{noun.capitalize()} por pessoa {period}:", rows)
 
 
 def listing(
@@ -147,12 +211,16 @@ def listing(
     type_: str | None,
     period: tuple[date, date] | None,
     today: date,
+    who: str | None = None,
 ) -> str:
     noun = {"EXPENSE": "gastos", "INCOME": "entradas", None: "lançamentos"}[type_]
     when = describe_period(*period, today) if period else None
     if not rows:
-        return f"Não encontrei {noun}" + (f" {when}." if when else ".")
-    title = f"Seus {noun} {when}:" if when else f"Seus últimos {noun}:"
+        return f"Não encontrei {noun}{_of(who)}" + (f" {when}." if when else ".")
+    if who is None:
+        title = f"Seus {noun} {when}:" if when else f"Seus últimos {noun}:"
+    else:
+        title = f"{noun.capitalize()}{_of(who)} {when}:" if when else f"Últimos {noun}{_of(who)}:"
     lines = [
         f"{index}. {day:%d/%m} — {label} — {'+' if is_income and type_ is None else ''}"
         f"{format_brl(value)}"
@@ -171,12 +239,15 @@ def comparison(
     period_a: tuple[date, date],
     period_b: tuple[date, date],
     today: date,
+    who: str | None = None,
 ) -> str:
     verb = "recebeu" if is_income else "gastou"
     scope_text = f" {'em' if is_income else 'com'} {scope}" if scope else ""
     a = describe_period(*period_a, today)
     b = describe_period(*period_b, today)
-    text = f"Você {verb} {format_brl(current)}{scope_text} {a} e {format_brl(previous)} {b}"
+    text = (
+        f"{_subject(who)} {verb} {format_brl(current)}{scope_text} {a} e {format_brl(previous)} {b}"
+    )
     difference = current - previous
     if difference == 0:
         return text + ": o mesmo valor."

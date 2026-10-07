@@ -42,6 +42,11 @@ Revisores (Codex) devem usar este documento como checklist.
   buscada só entre as do remetente; editar/desfazer exigem ser o dono (`can_modify_transaction`);
   o contexto de follow-up é por usuário, expira e só contém parâmetros validados. Testes:
   "edita o gasto da Maria", "desfaz o gasto do João", contexto de outro usuário.
+- V1.2: ADMIN da família = **somente leitura** sobre terceiros. `ReadScope` só é criado após
+  `can_view_family` (papel atual, revalidado a cada mensagem); membro resolvido por nome apenas
+  dentro da família, autorização antes da resolução; ambiguidade nunca escolhe; snapshot
+  `Transaction.family` impede leitura retroativa; IA não recebe lista de membros, papel, ids
+  ou telefones; negações logadas só com escopo e código (`query.scope_denied`).
 - `OPENAI_API_KEY` nunca é logada nem persistida; logs da IA só têm métricas (modelo, intenção,
   duração, tokens).
 
@@ -96,6 +101,7 @@ chamadas à Evolution sempre com timeout.
 - [ ] Algum selector/serviço novo é acessível sem `actor`?
 - [ ] ADMIN consegue editar/desfazer transação de terceiro por algum caminho?
 - [ ] Alguma mutação sem registro em `TransactionChange` ou fora do `atomic` da mensagem?
+- [ ] Alguma leitura de terceiro sem passar por `transactions.scopes` (ex.: filtro por `user_id` vindo de fora)?
 - [ ] Idempotência garantida por constraint, não só por `if exists`?
 - [ ] Algum `float` em dinheiro?
 - [ ] Algum segredo, telefone completo ou payload bruto em log?

@@ -89,6 +89,10 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   comparação, busca de referência) e `apps/whatsapp/tests/test_pipeline_v11.py` (edição,
   desfazer, follow-ups, TTL, isolamento, top/breakdown/lista/comparação, atomicidade).
   Fixtures do pipeline em `apps/whatsapp/tests/conftest.py`.
+- V1.2: `apps/transactions/tests/test_scopes.py` (autorização de escopo, resolução de nomes,
+  ambiguidade, snapshot histórico, isolamento entre famílias, ranking em 1 query),
+  `apps/whatsapp/tests/test_pipeline_v12.py` (ADMIN/MEMBER ponta a ponta, mutações em
+  terceiros, contexto familiar, perda de papel) e `apps/families/tests/test_admin_v12.py`.
 - Smoke test real (manual, fora da suíte): chamar `apps.ai.service.interpret_message` com o
   contexto real, sem persistir, e conferir intenção/valor/categoria/datas e tokens.
 

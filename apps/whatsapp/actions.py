@@ -4,6 +4,9 @@ Django is the authority here:
 - ids proposed by the model are re-checked against the catalog (active, compatible type);
 - amounts/dates are parsed locally (Decimal, ISO dates) and re-validated by the domain service;
 - the user is always the authenticated sender passed by the caller — never a model field;
+- family reads (V1.2) go through ``apps.transactions.scopes``: the model's ``scope`` /
+  ``target_member_name`` are hints; authorization (ADMIN of the *current* family, member
+  resolved by name inside that family) happens at execution time; mutations are owner-only;
 - the transaction to edit is chosen by Django in the sender's own data (never by an id
   from the model); ambiguous references change nothing;
 - totals, rankings, groupings and percentages come only from
@@ -13,6 +16,7 @@ Django is the authority here:
 atomic block (see ``pipeline.handle_ready_message``).
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -29,7 +33,8 @@ from apps.ai.contract import (
 )
 from apps.categories.models import Category, Subcategory
 from apps.categories.selectors import get_fallback_category, list_active_categories
-from apps.transactions import selectors
+from apps.families.selectors import member_display_name
+from apps.transactions import scopes, selectors
 from apps.transactions.models import (
     Transaction,
     TransactionChange,
@@ -45,6 +50,8 @@ from apps.transactions.services import (
 from common.money import InvalidAmount, to_decimal
 
 from . import messages
+
+logger = logging.getLogger(__name__)
 
 MAX_DESCRIPTION = 255
 DEFAULT_LIMIT = 5
@@ -100,7 +107,7 @@ class CreatePlan:
 @dataclass(frozen=True)
 class QueryPlan:
     intent: str
-    kind: str  # TOTAL | BALANCE | TOP | BREAKDOWN | LIST | COMPARE
+    kind: str  # TOTAL | BALANCE | TOP | BREAKDOWN | LIST | COMPARE | RANKING
     type: str | None
     category: Category | None
     subcategory: Subcategory | None
@@ -109,10 +116,18 @@ class QueryPlan:
     compare_start: date | None = None
     compare_end: date | None = None
     limit: int | None = None
+    # Untrusted hints about whose data; authorized at execution (apps.transactions.scopes).
+    scope_kind: str = scopes.SELF
+    member_name: str | None = None
 
-    def as_context(self) -> dict:
-        """Validated parameters only (ids, dates, kinds) for follow-ups."""
+    def as_context(self, scope: scopes.ReadScope) -> dict:
+        """Validated parameters only (ids, dates, kinds, resolved names) for follow-ups.
+
+        Semantics, never permission: every follow-up is re-authorized from scratch.
+        """
         return {
+            "scope": scope.kind,
+            "target_member_name": scope.member_name,
             "query_kind": self.kind,
             "transaction_type": self.type,
             "category_id": self.category.pk if self.category else None,
@@ -157,6 +172,15 @@ def plan(
         return ReplyPlan(i.intent, messages.NO_CONTEXT, "NO_CONTEXT")
     if i.intent == "HELP":
         return ReplyPlan(i.intent, messages.HELP)
+    if i.intent in _MUTATIONS and _names_someone_else(i):
+        # Owner-only by design (no delegated create/update/undo). The services also enforce
+        # it; this gives a clear reply instead of silently acting on the sender's own data.
+        reply = (
+            messages.OWN_ACCOUNT_ONLY
+            if i.intent == "CREATE_TRANSACTION"
+            else (messages.OWN_CHANGES_ONLY)
+        )
+        return ReplyPlan(i.intent, reply, "FORBIDDEN_OTHER_ACCOUNT")
     if i.intent == "CREATE_TRANSACTION":
         return _plan_create(i)
     if i.intent == "QUERY_TRANSACTIONS":
@@ -166,6 +190,13 @@ def plan(
     if i.intent == "UNDO_TRANSACTION":
         return UndoPlan(i.intent)
     return ReplyPlan(i.intent, messages.NOT_UNDERSTOOD, "NOT_UNDERSTOOD")
+
+
+_MUTATIONS = ("CREATE_TRANSACTION", "UPDATE_TRANSACTION", "UNDO_TRANSACTION")
+
+
+def _names_someone_else(i: Interpretation) -> bool:
+    return i.scope in (scopes.FAMILY, scopes.FAMILY_MEMBER) or bool(i.target_member_name)
 
 
 # --- CREATE ------------------------------------------------------------------------------
@@ -243,7 +274,7 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
         transaction_type = None
     elif kind == "TOP":
         transaction_type = TransactionType.EXPENSE  # "maiores gastos"
-    elif kind in ("BREAKDOWN", "COMPARE"):
+    elif kind in ("BREAKDOWN", "COMPARE", "RANKING"):
         transaction_type = transaction_type or TransactionType.EXPENSE
     elif kind not in ("TOTAL", "LIST"):
         return ReplyPlan(i.intent, messages.NOT_UNDERSTOOD, "NOT_UNDERSTOOD")
@@ -275,6 +306,12 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
     if kind in ("TOP", "LIST"):
         limit = DEFAULT_LIMIT if i.limit is None or i.limit < 1 else min(i.limit, MAX_LIMIT)
 
+    scope_kind = i.scope if i.scope in (scopes.FAMILY, scopes.FAMILY_MEMBER) else scopes.SELF
+    if scope_kind == scopes.SELF and i.target_member_name:
+        scope_kind = scopes.FAMILY_MEMBER  # a named person is never the sender's own data
+    if kind == "RANKING":
+        scope_kind = scopes.FAMILY  # per-person totals only exist at family level
+
     return QueryPlan(
         i.intent,
         kind,
@@ -286,6 +323,8 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
         compare_start,
         compare_end,
         limit,
+        scope_kind=scope_kind,
+        member_name=i.target_member_name if scope_kind == scopes.FAMILY_MEMBER else None,
     )
 
 
@@ -513,25 +552,73 @@ def _execute_undo(p: UndoPlan, user: User, idempotency_key: str) -> Outcome:
     return Outcome(p.intent, reply, transaction=txn)
 
 
-def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
-    is_income = p.type == TransactionType.INCOME
-    context = p.as_context()
+def _authorize(p: QueryPlan, user: User) -> scopes.ReadScope | Outcome:
+    """Turn the untrusted scope hint into an authorized ReadScope, or a discreet refusal.
 
-    if p.kind == "BALANCE":
-        totals = selectors.get_period_totals(user=user, start_date=p.start, end_date=p.end)
+    Runs inside the message's atomic block, so the actor's role is checked at execution time
+    (a stored follow-up context never carries permission).
+    """
+    try:
+        return scopes.resolve(user, p.scope_kind, p.member_name)
+    except scopes.ScopeDenied as denied:
+        if denied.code == denied.MEMBER_AMBIGUOUS:
+            reply = messages.member_ambiguous(denied.name)
+        else:
+            reply = {
+                denied.NO_FAMILY: messages.NO_FAMILY,
+                denied.ADMIN_ONLY: messages.ADMIN_ONLY,
+                denied.MEMBER_NOT_FOUND: messages.MEMBER_NOT_FOUND,
+            }[denied.code]
+        logger.info("query.scope_denied scope=%s reason=%s", p.scope_kind, denied.code)
+        return Outcome(p.intent, reply, denied.code)
+
+
+def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
+    scope = _authorize(p, user)
+    if isinstance(scope, Outcome):
+        return scope
+    is_income = p.type == TransactionType.INCOME
+    is_family = scope.kind == scopes.FAMILY
+    who = (
+        None if scope.kind == scopes.SELF else (messages.FAMILY if is_family else scope.member_name)
+    )
+    context = p.as_context(scope)
+
+    if p.kind == "RANKING":
+        rows = selectors.get_member_totals(
+            scope=scope, start_date=p.start, end_date=p.end, type=p.type
+        )
+        reply = messages.ranking(
+            [(r.name, r.total) for r in rows],
+            is_income=is_income,
+            start=p.start,
+            end=p.end,
+            today=today,
+        )
+    elif p.kind == "BALANCE":
+        totals = selectors.get_period_totals(scope=scope, start_date=p.start, end_date=p.end)
         reply = messages.balance(
-            income=totals.income, expense=totals.expense, start=p.start, end=p.end, today=today
+            income=totals.income,
+            expense=totals.expense,
+            start=p.start,
+            end=p.end,
+            today=today,
+            who=who,
         )
     elif p.kind == "TOP":
         rows = selectors.get_top_expenses(
-            user=user, start_date=p.start, end_date=p.end, limit=p.limit
+            scope=scope, start_date=p.start, end_date=p.end, limit=p.limit
         )
         reply = messages.top_expenses(
-            [(_item_label(t), t.amount) for t in rows], start=p.start, end=p.end, today=today
+            [(_item_label(t, with_member=is_family), t.amount) for t in rows],
+            start=p.start,
+            end=p.end,
+            today=today,
+            who=who,
         )
     elif p.kind == "BREAKDOWN":
         rows = selectors.get_totals_by_category(
-            user=user, start_date=p.start, end_date=p.end, type=p.type
+            scope=scope, start_date=p.start, end_date=p.end, type=p.type
         )
         reply = messages.breakdown(
             [(r.category_name, r.total) for r in rows],
@@ -539,10 +626,11 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
             start=p.start,
             end=p.end,
             today=today,
+            who=who,
         )
     elif p.kind == "LIST":
         rows = selectors.list_transactions(
-            user=user,
+            scope=scope,
             start_date=p.start,
             end_date=p.end,
             type=p.type,
@@ -551,16 +639,22 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
         )[: p.limit]
         reply = messages.listing(
             [
-                (t.transaction_date, _item_label(t), t.amount, t.type == TransactionType.INCOME)
+                (
+                    t.transaction_date,
+                    _item_label(t, with_member=is_family),
+                    t.amount,
+                    t.type == TransactionType.INCOME,
+                )
                 for t in rows
             ],
             type_=p.type,
             period=(p.start, p.end) if p.start else None,
             today=today,
+            who=who,
         )
     elif p.kind == "COMPARE":
         result = selectors.compare_periods(
-            user=user,
+            scope=scope,
             type=p.type,
             start_date=p.start,
             end_date=p.end,
@@ -578,10 +672,11 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
             period_a=(p.start, p.end),
             period_b=(p.compare_start, p.compare_end),
             today=today,
+            who=who,
         )
     else:  # TOTAL
         value = selectors.get_total(
-            user=user,
+            scope=scope,
             start_date=p.start,
             end_date=p.end,
             type=p.type,
@@ -589,7 +684,13 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
             subcategory=p.subcategory,
         )
         reply = messages.total(
-            is_income=is_income, value=value, scope=_scope(p), start=p.start, end=p.end, today=today
+            is_income=is_income,
+            value=value,
+            scope=_scope(p),
+            start=p.start,
+            end=p.end,
+            today=today,
+            who=who,
         )
     return Outcome(p.intent, reply, query_context=context)
 
@@ -611,10 +712,14 @@ def _where_from_snapshot(data: dict) -> str:
     return messages.where(category.name if category else "?", sub.name if sub else None)
 
 
-def _item_label(txn: Transaction) -> str:
+def _item_label(txn: Transaction, *, with_member: bool = False) -> str:
     if txn.description:
-        return txn.description[:1].upper() + txn.description[1:]
-    return txn.subcategory.name if txn.subcategory else txn.category.name
+        label = txn.description[:1].upper() + txn.description[1:]
+    else:
+        label = txn.subcategory.name if txn.subcategory else txn.category.name
+    if with_member:
+        label += f" ({member_display_name(txn.user)})"
+    return label
 
 
 def _rejected(intent: str, exc: ValidationError) -> Outcome:

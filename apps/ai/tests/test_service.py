@@ -46,6 +46,9 @@ OUTPUT = {
     "limit": None,
     "reference": None,
     "updates": None,
+    # v1.2 fields
+    "scope": None,
+    "target_member_name": None,
 }
 
 

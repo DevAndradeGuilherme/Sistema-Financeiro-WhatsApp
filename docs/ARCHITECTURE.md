@@ -92,7 +92,8 @@ Evolution ──POST──> /webhooks/evolution/<...>   (whatsapp)
        CREATE_TRANSACTION  → transactions.services.create_transaction(user=remetente, ...)
        UPDATE_TRANSACTION  → selectors.find_transactions (só do remetente) → services.update_transaction
        UNDO_TRANSACTION    → services.undo_last_change(user=remetente)
-       QUERY_TRANSACTIONS  → transactions.selectors.* (SQL) + ConversationContext.remember
+       QUERY_TRANSACTIONS  → transactions.scopes.resolve (autoriza) → selectors.*(scope=) (SQL)
+                             + ConversationContext.remember
        HELP / UNKNOWN      → resposta fixa
   9. Resposta montada localmente (whatsapp.messages + common.formatting).
  10. Envia via cliente Evolution, fora da transação; falha não reexecuta o efeito.
@@ -181,3 +182,7 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-07 — Mutações por usuário serializadas com `SELECT ... FOR NO KEY UPDATE` na linha do usuário — evita corrida update × undo sem bloquear inserts com FK.
 - 2026-10-07 — Contexto conversacional em `whatsapp.ConversationContext` (PostgreSQL, TTL 20 min, só a última consulta validada) — sem Redis, sem memória aberta.
 - 2026-10-07 — Contrato v1.1 plano + objetos `reference`/`updates`; consultas avançadas como `query_kind` — menos campos que intenções separadas.
+- 2026-10-07 — Leitura familiar via `transactions.scopes.ReadScope` (só criável após a policy; selectors aceitam `scope=`) — autorização centralizada, sem selector por `user_id`.
+- 2026-10-07 — Dado familiar = snapshot `Transaction.family`; consulta por membro exige membership atual — sem reatribuição retroativa de histórico.
+- 2026-10-07 — Nenhuma lista de membros enviada à IA; nome resolvido no Django dentro da família — privacidade e tokens.
+- 2026-10-07 — Django Admin: troca de ADMIN só pelo formulário da família (rebaixa antes de promover); ADMIN não pode ser rebaixado/excluído isoladamente com membros na família.

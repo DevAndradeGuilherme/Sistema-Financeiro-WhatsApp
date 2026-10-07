@@ -20,14 +20,29 @@ VALID = {
     "limit": None,
     "reference": None,
     "updates": None,
+    # v1.2 fields
+    "scope": None,
+    "target_member_name": None,
 }
 
 
 def test_schema_is_strict_compatible():
     assert OUTPUT_SCHEMA["additionalProperties"] is False
     assert set(OUTPUT_SCHEMA["required"]) == set(OUTPUT_SCHEMA["properties"])
-    # No user/authorization fields in the V1.0 contract.
-    assert not {"target_user", "scope", "role", "user_id"} & set(OUTPUT_SCHEMA["properties"])
+    # No user/authorization fields. (V1.2 adds only the semantic ``scope`` enum and a free-text
+    # ``target_member_name``, both resolved and authorized by Django.)
+    forbidden = {
+        "target_user",
+        "role",
+        "user_id",
+        "target_user_id",
+        "target_phone",
+        "permission",
+        "authorized",
+        "is_admin",
+    }
+    assert not forbidden & set(OUTPUT_SCHEMA["properties"])
+    assert OUTPUT_SCHEMA["properties"]["scope"]["enum"] == ["SELF", "FAMILY", "FAMILY_MEMBER", None]
     # No numeric money: amount is a string.
     assert OUTPUT_SCHEMA["properties"]["amount"]["type"] == ["string", "null"]
 

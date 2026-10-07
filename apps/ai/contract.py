@@ -2,14 +2,15 @@
 
 Plain dataclasses, no domain imports. The model output is an untrusted *proposal*: this module
 only checks its shape; Django (apps.whatsapp.actions) validates meaning and authorizes.
-There are no user/scope fields: every request concerns the authenticated sender only.
+There are no user ids, phones or permission fields. ``scope``/``target_member_name`` only
+describe whose money the message talks about; Django authorizes (apps.transactions.scopes).
 """
 
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-CONTRACT_VERSION = "v1.1"
+CONTRACT_VERSION = "v1.2"
 
 INTENTS = (
     "CREATE_TRANSACTION",
@@ -20,7 +21,9 @@ INTENTS = (
     "UNKNOWN",
 )
 TRANSACTION_TYPES = ("EXPENSE", "INCOME")
-QUERY_KINDS = ("TOTAL", "BALANCE", "TOP", "BREAKDOWN", "LIST", "COMPARE")
+QUERY_KINDS = ("TOTAL", "BALANCE", "TOP", "BREAKDOWN", "LIST", "COMPARE", "RANKING")
+# Semantic hint only ("whose money the message talks about"). Never an authorization.
+SCOPES = ("SELF", "FAMILY", "FAMILY_MEMBER")
 
 
 def _nullable(json_type: str, **extra: Any) -> dict:
@@ -64,6 +67,8 @@ OUTPUT_SCHEMA: dict = _object(
     {
         "intent": {"type": "string", "enum": list(INTENTS)},
         "follow_up": {"type": "boolean"},
+        "scope": _nullable("string", enum=[*SCOPES, None]),
+        "target_member_name": _nullable("string"),
         "transaction_type": _TYPE,
         "amount": _nullable("string"),
         "description": _nullable("string"),
@@ -160,6 +165,8 @@ class Interpretation:
     limit: int | None = None
     reference: TransactionReference | None = None
     updates: TransactionUpdates | None = None
+    scope: str | None = None
+    target_member_name: str | None = None
 
     def __repr__(self) -> str:  # keep amounts/descriptions out of logs and tracebacks
         return f"Interpretation(intent={self.intent!r}, query_kind={self.query_kind!r})"
@@ -235,6 +242,8 @@ def parse_output(data: Any) -> Interpretation:
     return Interpretation(
         intent=intent,
         follow_up=r.boolean("follow_up"),
+        scope=r.text("scope", SCOPES),
+        target_member_name=r.text("target_member_name"),
         transaction_type=r.text("transaction_type", TRANSACTION_TYPES),
         amount=r.text("amount"),
         description=r.text("description"),

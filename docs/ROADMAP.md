@@ -1,6 +1,7 @@
 # Roadmap
 
-Versão atual: **V1.1 funcionalmente concluída** (validada ponta a ponta em DEV, 2026-10-07).
+Versão atual: **V1.2 implementada** — validação real do fluxo MEMBER pendente (ver status da
+V1.2). V1.1 validada ponta a ponta em DEV (2026-10-07).
 Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
 produção **não** está pronta.
 
@@ -41,9 +42,23 @@ esse mês?" retorna o total correto, ambos ponta a ponta via WhatsApp, com teste
 
 ## V1.2 — Famílias
 
-- Famílias, membros, papéis ADMIN/MEMBER ativos no canal.
-- Consultas familiares consolidadas e consultas individuais pelo ADMIN (`FAMILY_QUERY`).
-- Regras completas de isolamento e autorização (`DOMAIN.md §6`) testadas ponta a ponta.
+- [x] Famílias, membros, papéis ADMIN/MEMBER ativos no canal (ADMIN = somente leitura sobre terceiros).
+- [x] Consultas familiares (total, receita, saldo, por categoria, maiores gastos, comparação,
+  ranking por pessoa) e por membro, com follow-ups.
+- [x] Regras de isolamento e autorização (`DOMAIN.md §6`) testadas; snapshot `Transaction.family`.
+
+Status da V1.2 (2026-10-07):
+
+| Item | Status |
+|---|---|
+| IMPLEMENTATION_STATUS | COMPLETE |
+| AUTOMATED_VALIDATION | COMPLETE (ADMIN/MEMBER distintos, famílias isoladas, mutações em terceiros, perda de papel, contexto, ambiguidade, snapshot) |
+| ADMIN_LIVE_VALIDATION | COMPLETE (número real como ADMIN da "Família DEV": consultas familiares/membro/ranking/top/comparação e negação de UPDATE/UNDO em terceiro) |
+| MEMBER_LIVE_VALIDATION | PENDING_LIVE_VALIDATION — requer um segundo número físico (o MEMBER da Família DEV é fictício, sem telefone) |
+
+A V1.2 **não** está integralmente validada em ambiente real até o fluxo MEMBER ser executado
+por um segundo número: "20 reais de alimentação", "quanto gastei esse mês?", "quanto minha
+família gastou esse mês?" (negar) e "quanto <ADMIN> gastou esse mês?" (negar).
 
 ## V1.3 — Áudio
 

@@ -6,6 +6,24 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — V1.2: acesso financeiro familiar (ADMIN somente leitura)
+- Status: implementação e validação automatizada COMPLETE; validação real ADMIN COMPLETE;
+  validação real MEMBER PENDING_LIVE_VALIDATION (sem segundo número físico).
+- `transactions.scopes`: `ReadScope` (SELF / FAMILY / FAMILY_MEMBER) criado só após autorização
+  (`families.policies.can_view_family`, papel atual); selectors aceitam `scope=`.
+- `get_member_totals` (ranking por pessoa em um GROUP BY); top/listagem familiar com nome do membro.
+- Resolução de membro por nome restrita à família (sem acento/maiúscula; ambiguidade pede nome completo).
+- Contrato de IA v1.2: `scope`, `target_member_name`, `query_kind` `RANKING`; contexto de
+  follow-up inclui escopo e nome resolvido (sem permissão).
+- Respostas locais para família/membro/ranking e negações discretas; mutações citando terceiros recusadas.
+- Django Admin de famílias: troca de ADMIN segura no formulário da família; ADMIN não pode ser
+  rebaixado/excluído isoladamente; exclusão em massa de memberships desativada.
+
+### Changed
+- Regra de visibilidade familiar documentada como snapshot `Transaction.family` (substitui a
+  regra provisória da V1.0). Testes de contrato atualizados para os campos da v1.2.
+
+
 ### Added — V1.1: edição, desfazer e consultas avançadas
 - `update_transaction` (dono, transação ativa, campos financeiros; regras da criação reaplicadas)
   e `undo_last_change` (pilha CREATE/UPDATE; undo de criação = soft delete; sem redo).

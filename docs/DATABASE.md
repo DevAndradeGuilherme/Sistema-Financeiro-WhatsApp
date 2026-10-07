@@ -93,6 +93,9 @@ Querysets: o manager padrão não deve esconder registros excluídos de forma im
 Admin; selectors de domínio **sempre** filtram `deleted_at IS NULL` explicitamente ou via
 queryset method nomeado (`.active()`).
 
+> V1.2 não criou tabelas nem colunas: consultas familiares usam `Transaction.family` (já
+> indexável via FK) e `FamilyMember`. Nenhuma alteração de RLS.
+
 ### `transactions.TransactionChange` (V1.1)
 
 | Campo | Tipo | Regras |

@@ -424,6 +424,8 @@ def test_model_cannot_supply_transaction_id():
             "transaction_id": "abc",
         },
         "updates": None,
+        "scope": None,  # v1.2
+        "target_member_name": None,  # v1.2
     }
     from apps.ai.contract import InvalidOutput
 
@@ -503,7 +505,11 @@ def test_period_follow_up(client, alice, catalog, spending, ai, evolution):
         "compare_start_date",
         "compare_end_date",
         "limit",
+        # v1.2: whose data (semantics only; re-authorized on every query)
+        "scope",
+        "target_member_name",
     }
+    assert context.previous_query["scope"] == "SELF"
 
 
 def test_category_follow_up(client, alice, catalog, spending, ai, evolution):

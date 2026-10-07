@@ -28,10 +28,14 @@ Django (`apps/whatsapp/messages.py`).
   edição/desfazer/novas consultas e schema maior com objetos aninhados), ~85–145 de saída
   (objetos `reference`/`updates`), +~60 de entrada em follow-ups (consulta anterior).
   0 tokens de raciocínio; 1,5–4 s por mensagem.
+  Contrato v1.2: ~1.420 de entrada (+~160: regras de `scope`) tanto em SELF quanto em FAMILY,
+  ~100–150 de saída. **Nenhuma lista de membros é enviada** (custo zero e sem dados pessoais):
+  o modelo só copia o nome escrito; o Django resolve dentro da família.
 
 ### Contexto conversacional (V1.1)
 
-Para follow-ups, a última consulta **validada** do remetente (ids, datas, tipo, `limit` — sem
+Para follow-ups, a última consulta **validada** do remetente (ids, datas, tipo, `limit`, e na
+V1.2 `scope` + nome do membro já resolvido — sem
 valores, textos ou dados de terceiros) é enviada como mensagem `developer` separada
 (`Previous query: {...}`), antes da mensagem do usuário. As instruções não mudam (prefixo
 estável). Contexto vem de `ConversationContext` (por usuário, TTL
@@ -63,14 +67,14 @@ resultado possível é uma proposta inválida, rejeitada pela validação.
 | `UNDO_TRANSACTION` | V1.1 ✅ | Desfazer a última ação (política em `DOMAIN.md §5`) |
 | `HELP` | V1.0 ✅ | Ajuda (resposta local fixa) |
 | `UNKNOWN` | V1.0 ✅ | Não identificado, fora do escopo ou sobre dados/lançamentos de outra pessoa |
-| `FAMILY_QUERY` | V1.2 | — |
+| (família) | V1.2 ✅ | Consultas com `scope` `FAMILY`/`FAMILY_MEMBER` e `query_kind` `RANKING` (totais por pessoa) |
 
 `COMPARE_PERIODS`, `TOP_EXPENSES` e `CATEGORY_BREAKDOWN` foram modelados como `query_kind`
 (mesma intenção de consulta) em vez de intenções separadas.
 
 O enum do schema contém apenas as intenções da versão corrente.
 
-## 4. Schema de saída (`contract_version v1.1`)
+## 4. Schema de saída (`contract_version v1.2`)
 
 Todos os campos presentes; ausência = `null` (requisito do modo estrito). `additionalProperties: false`.
 
@@ -91,9 +95,14 @@ Todos os campos presentes; ausência = `null` (requisito do modo estrito). `addi
 | `reference` | objeto \| null | `UPDATE`: `last` (bool), `transaction_type`, `category_id`, `subcategory_id`, `description`, `amount`, `transaction_date` |
 | `updates` | objeto \| null | `UPDATE`: `amount`, `description`, `category_id`, `subcategory_id`, `transaction_date` (null = não muda) |
 
+| `scope` | `SELF` \| `FAMILY` \| `FAMILY_MEMBER` \| null | V1.2: de quem é o dinheiro citado (semântica; null = SELF) |
+| `target_member_name` | string \| null | V1.2: nome como escrito ("Maria"); resolvido pelo Django dentro da família |
+
 Objetos aninhados também são estritos (`additionalProperties: false`, todos os campos
-obrigatórios). Não existem `transaction_id`, `scope`, `target_user`, `user_id`, `confidence`
-nem tipo editável: toda operação é do próprio remetente e a transação é escolhida pelo Django.
+obrigatórios). Não existem `transaction_id`, `target_user_id`, `target_phone`, `user_id`,
+`role`, `permission`, `authorized`, `is_admin`, `confidence` nem tipo editável. `scope` e
+`target_member_name` **não autorizam nada**: o Django decide (`DOMAIN.md §6`). Mutações citando
+outra pessoa são recusadas; mesmo sem essa pista, os services só operam sobre o remetente.
 
 ```jsonc
 // "10 reais de gasolina" (hoje = 2026-10-06)
@@ -132,6 +141,9 @@ testes de contrato e `CHANGELOG.md`.
 9. `UPDATE`: transação resolvida pelo Django (`DOMAIN.md §5`); ids de `updates` revalidados;
    `update_transaction` reaplica todas as regras. Referência ambígua → nada muda.
 10. `follow_up=true` sem contexto válido → "Não consegui identificar a consulta anterior...".
+11. V1.2: `scope`/`target_member_name` viram um `ReadScope` em `transactions.scopes` na execução
+    (dentro do `atomic`): `FAMILY`/`FAMILY_MEMBER`/`RANKING` exigem ser o ADMIN atual; nome
+    presente com `SELF` é tratado como `FAMILY_MEMBER`; `RANKING` é sempre `FAMILY`.
 
 ## 6. Falhas
 

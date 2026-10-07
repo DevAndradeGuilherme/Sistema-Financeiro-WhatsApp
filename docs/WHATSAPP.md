@@ -161,6 +161,10 @@ Retenção de `InboundMessage` deve ser definida antes da produção.
   R$ 10,00 em Transporte · Combustível desfeito.", listas numeradas (até 10 linhas) para
   maiores gastos/por categoria/últimos lançamentos e "Você gastou R$ 850,00 em outubro e
   R$ 700,00 em setembro: R$ 150,00 a mais (+21,4%)."
+- V1.2 (família, ADMIN): "A família gastou R$ 1.730,00 em outubro.", "Maria gastou R$ 420,00 com
+  Alimentação em outubro.", "Gastos por pessoa em outubro:\n1. Alice — R$ 800,00 ...",
+  "Maiores gastos da família ...: 1. Mercado (Maria) — R$ 420,00". Negações discretas em
+  `DOMAIN.md §6`. Nunca telefone de membro em resposta.
 
 Comandos (nunca imprimem API key nem segredo):
 
