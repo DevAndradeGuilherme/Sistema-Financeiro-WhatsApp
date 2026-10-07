@@ -1,6 +1,6 @@
 # Roadmap
 
-Versão atual: **pré-V1.0** (fundação documental concluída; nenhuma funcionalidade implementada).
+Versão atual: **V1.0 em andamento** — núcleo do domínio financeiro entregue; faltam WhatsApp e IA.
 
 Regra: implementar somente a versão corrente. Itens de versões futuras só influenciam
 o desenho quando registrado aqui (ex.: estrutura de família desde a V1.0).
@@ -8,18 +8,20 @@ Ao concluir uma versão, atualizar a linha "Versão atual" e o `CHANGELOG.md`.
 
 ## V1.0 — Fundação funcional
 
-- Projeto Django, settings por env, Docker, Gunicorn, Nginx (alvo de `DEPLOYMENT.md`).
-- Supabase PostgreSQL; testes com PostgreSQL.
-- `accounts`: User customizado com telefone E.164.
-- `categories`: categorias/subcategorias com aliases, catálogo inicial, Django Admin.
-- `families`: **apenas models e Admin** (sem funcionalidade exposta no canal).
-- `transactions`: criação de despesas e receitas; consultas de totais próprios por
-  tipo/categoria/subcategoria/período.
-- `whatsapp`: webhook Evolution autenticado, idempotência, identificação por telefone,
-  envio de respostas.
-- `ai`: interpretação textual estruturada (`CREATE_TRANSACTION`, `QUERY_TRANSACTIONS`,
+- [x] Projeto Django, settings por env, Docker, Gunicorn.
+- [ ] Nginx/TLS e procedimento de produção (`DEPLOYMENT.md`).
+- [x] Supabase PostgreSQL (migrations aplicadas em dev); testes com PostgreSQL local.
+- [x] `accounts`: User customizado com telefone E.164.
+- [x] `categories`: categorias/subcategorias com aliases, catálogo inicial, Django Admin.
+- [x] `families`: models, services, policy de visibilidade e Admin (sem funcionalidade no canal).
+- [x] `transactions`: criação de despesas e receitas, soft delete; selectors determinísticos
+  (período, total, por categoria, top despesas).
+- [ ] `whatsapp`: webhook Evolution autenticado, `InboundMessage`, idempotência do webhook,
+  identificação por telefone, envio de respostas.
+- [ ] `ai`: interpretação textual estruturada (`CREATE_TRANSACTION`, `QUERY_TRANSACTIONS`,
   `HELP`, `UNKNOWN`).
-- Django Admin para usuários, categorias, transações e mensagens.
+- [x] Django Admin para usuários, famílias, categorias e transações.
+- [ ] Django Admin para mensagens (com o app `whatsapp`).
 
 Pronto quando: "10 reais de gasolina" cria transação correta e "quanto gastei de transporte
 esse mês?" retorna o total correto, ambos ponta a ponta via WhatsApp, com testes cobrindo

@@ -7,7 +7,8 @@ O usuário envia mensagens em linguagem natural — "10 reais de gasolina",
 despesas/receitas ou responde consultas, sempre com validação, autorização e cálculo
 feitos no servidor.
 
-> **Status:** fundação documental. Nenhuma funcionalidade implementada ainda.
+> **Status:** V1.0 em andamento — domínio financeiro (usuários, famílias, categorias,
+> transações, consultas) implementado; integração WhatsApp e IA pendentes.
 > Veja `docs/ROADMAP.md`.
 
 ## Princípio
@@ -47,4 +48,11 @@ IA interpreta.  Django valida e autoriza.  PostgreSQL calcula e persiste.  Whats
 ## Configuração
 
 Copie `.env.example` para `.env` e preencha os valores. Nunca versione `.env`.
-Instruções de execução serão adicionadas na V1.0 (ver `docs/DEPLOYMENT.md`).
+
+```bash
+python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt
+python manage.py migrate && python manage.py seed_categories
+python manage.py createsuperuser && python manage.py runserver
+```
+
+Testes e lint: `docs/TESTING.md`. Docker: `docs/DEPLOYMENT.md`.

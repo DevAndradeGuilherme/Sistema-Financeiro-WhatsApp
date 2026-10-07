@@ -3,31 +3,46 @@
 Configuração de banco/Supabase: [`DATABASE.md §3`](DATABASE.md). Requisitos de segurança:
 [`SECURITY.md`](SECURITY.md).
 
-> Nada disto está implementado ainda. Este documento define o alvo para a V1.0.
+> Implementado: Dockerfile, `compose.yaml`, Gunicorn, health check. Pendente: Nginx/TLS e
+> procedimento de produção (seções 4–5 são o alvo).
 
-## 1. Versões alvo
+## 1. Versões
 
-- Python 3.12+.
-- Django 5.2 LTS (ou LTS vigente no início da V1.0).
-- PostgreSQL na versão fornecida pelo Supabase; testes locais na mesma major.
+- Python 3.12 (imagem `python:3.12-slim`).
+- Django 5.2 LTS; psycopg 3; Gunicorn 23. Versões exatas em `requirements.txt`.
+- PostgreSQL 17 (versão do projeto Supabase); testes locais em `postgres:17-alpine`.
 - Evolution API em versão fixada (tag explícita, nunca `latest`).
 
 ## 2. Ambientes
 
 | Ambiente | Banco | WhatsApp | OpenAI |
 |---|---|---|---|
-| Local | PostgreSQL em container | mock / instância de teste | mock ou chave dev |
+| Local | Supabase (projeto de desenvolvimento) | mock / instância de teste | mock ou chave dev |
 | Teste/CI | PostgreSQL em container | mock | mock |
 | Produção | Supabase PostgreSQL | instância Evolution de produção | chave de produção |
 
 Um projeto Supabase de staging é recomendado antes de produção.
 
-## 3. Artefatos previstos (V1.0)
+## 3. Artefatos
 
-- `Dockerfile`: imagem Python slim, usuário não-root, dependências fixadas, `collectstatic`
-  no build, entrypoint com Gunicorn.
-- `docker-compose.yml` (local): app + PostgreSQL (+ Evolution opcional).
-- Arquivo de dependências com versões fixadas.
+- `Dockerfile`: `python:3.12-slim`, usuário não-root, `requirements.txt` fixado,
+  `collectstatic` no build (valores placeholder só para esse passo), `HEALTHCHECK` em
+  `/health/`, `CMD` Gunicorn (`GUNICORN_WORKERS`, `GUNICORN_TIMEOUT`).
+- `compose.yaml`: serviço `web` (runserver, código montado, `.env`) apontando para o Supabase;
+  serviço `test-db` só no profile `test`. Não há PostgreSQL local para a aplicação, Redis nem Nginx.
+- `requirements.txt` (runtime) e `requirements-dev.txt` (testes/lint), versões fixadas.
+
+Comandos locais:
+
+```bash
+docker compose up --build web                 # http://localhost:8000/admin/
+python manage.py migrate                       # aplica migrations no banco DB_*
+python manage.py seed_categories               # catálogo inicial (idempotente)
+python manage.py createsuperuser
+```
+
+Sem Nginx, estáticos do Admin só são servidos com `DJANGO_DEBUG=True` (desenvolvimento).
+O health check do container usa `Host: 127.0.0.1`: mantenha `127.0.0.1` em `DJANGO_ALLOWED_HOSTS`.
 
 ## 4. Runtime
 
@@ -61,8 +76,10 @@ sempre que possível (expandir → migrar → contrair).
 Lista canônica em [`.env.example`](../.env.example). Toda variável nova deve ser adicionada
 lá com placeholder e comentário. Agrupamentos:
 
-- Django: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `TIME_ZONE`.
-- Banco: `DB_*`.
+- Django: `DJANGO_ENV`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`,
+  `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_ADMIN_URL`, `TIME_ZONE`, `LOG_LEVEL`.
+- Banco: `DB_*` (inclui `DB_ENABLE_RLS`, `DB_CONNECT_TIMEOUT`). Testes: `TEST_DB_*`.
+- Gunicorn: `GUNICORN_WORKERS`, `GUNICORN_TIMEOUT`.
 - OpenAI: `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_TIMEOUT_SECONDS`
   (+ modelo de transcrição na V1.3).
 - Evolution: `EVOLUTION_API_BASE_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE_NAME`,

@@ -1,0 +1,11 @@
+# Runtime dependencies (pinned). Update deliberately and record in docs/CHANGELOG.md.
+Django==5.2.18
+asgiref==3.12.1
+sqlparse==0.6.0
+psycopg[binary]==3.2.13
+psycopg-binary==3.2.13
+typing_extensions==4.16.0
+python-dotenv==1.2.4
+gunicorn==23.0.0
+packaging==26.3
+tzdata==2026.5

@@ -136,8 +136,12 @@ a etapa que produz o texto/proposta.
 
 - Tudo sensível ou dependente de ambiente vem de variáveis de ambiente (`.env.example`).
 - `OPENAI_MODEL` obrigatório por env; sem valor default hardcoded em código de negócio.
-- Settings em um único módulo `config/settings.py` lendo env; só dividir se houver
-  necessidade real.
+- Settings em `config/settings/`: `base.py` (comum, sem banco), `runtime.py` (app/servidor,
+  banco `DB_*`) e `test.py` (suíte, banco `TEST_DB_*` local). A divisão existe para que os
+  testes nunca usem a configuração de banco da aplicação.
+- `DJANGO_ENV=production` ativa guardas: falha se `DEBUG=True`, sem `ALLOWED_HOSTS` ou com
+  `SECRET_KEY` fraca; liga cookies seguros, HSTS e redirect HTTPS (exceto `/health/`).
+- `common` é um app Django (sem models) para poder registrar o handler de RLS pós-migrate.
 
 ## 8. Registro de decisões (ADR resumido)
 
@@ -151,3 +155,13 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-06 — Processamento síncrono no webhook no MVP — sem infraestrutura de fila.
 - 2026-10-06 — Estrutura de família criada cedo (V1.0), funcionalidades liberadas na V1.2 — evita migração de dados posterior.
 - 2026-10-06 — Testes rodam contra PostgreSQL, não SQLite — constraints e tipos precisam ser os reais.
+- 2026-10-06 — Python 3.12, Django 5.2 LTS, psycopg 3; dependências fixadas em `requirements*.txt` — LTS até 2028.
+- 2026-10-06 — Configuração de banco por `DB_*` (não `DATABASE_URL`) — já era o contrato documentado no `.env.example`; evita dependência de parser de URL.
+- 2026-10-06 — `python-dotenv` para ler `.env` localmente — variáveis do ambiente sempre têm precedência.
+- 2026-10-06 — Testes em PostgreSQL local descartável (container `test-db`), nunca no Supabase — o test runner cria/destroi banco; segurança acima de conveniência.
+- 2026-10-06 — RLS sem policies habilitado automaticamente após `migrate` — impede leitura pela Data API do Supabase.
+- 2026-10-06 — `Category.kind` aceita `BOTH` — categorias usadas tanto para despesa quanto receita.
+- 2026-10-06 — `Transaction.family` = família do dono na criação, derivada pelo service — base para consultas familiares sem permitir atribuição arbitrária.
+- 2026-10-06 — Exatamente um ADMIN por família (unique parcial no banco + service/admin) — regra simples e verificável.
+- 2026-10-06 — Admin de transações é somente leitura — dados financeiros só mudam pelos services e pelo dono.
+- 2026-10-06 — Catálogo inicial por management command idempotente, não data migration — administrador pode alterar o catálogo livremente.

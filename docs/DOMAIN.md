@@ -40,23 +40,32 @@ Transaction N ── 0..1 Subcategory
 - `FamilyMember`: liga `User` a `Family` com `role ∈ {ADMIN, MEMBER}`.
 - Decisão inicial: **um usuário pertence a no máximo uma família** (unicidade em `user`).
   Revisável na V1.2 com registro em `ARCHITECTURE.md`.
-- Uma família deve ter ao menos um ADMIN (validado em service/admin).
+- Uma família tem **exatamente um ADMIN**: no máximo um garantido pelo banco (unique parcial
+  `family_single_admin`); "ao menos um" garantido por `create_family` (cria família + ADMIN
+  atomicamente) e pelo formulário do Django Admin.
 - Estrutura existe desde a V1.0; funcionalidades familiares são liberadas na V1.2.
   Antes disso, todo usuário opera como se estivesse sozinho.
-- Visibilidade familiar é determinada pela **associação atual**. Se um membro sai da
-  família, o ADMIN deixa de ver as transações dele.
+- `Transaction.family` registra a família do dono **no momento da criação**; é derivada pelo
+  service a partir do membership, nunca escolhida livremente.
+- Visibilidade familiar (V1.2) usa a regra mais restritiva: o ADMIN só vê transações cuja
+  `family` é a sua **e** cujo dono ainda é membro dela. Se um membro sai, o ADMIN deixa de ver
+  as transações dele. "Dono" é sempre `Transaction.user`; ADMIN nunca é dono de dados alheios.
 
 ### Category e Subcategory (`categories`)
 
 - Catálogo **fixo**, mantido apenas pelo administrador do sistema via Django Admin
-  (ou data migration para o catálogo inicial).
+  (catálogo inicial via `python manage.py seed_categories`, idempotente por `slug`, nunca
+  sobrescreve alterações do administrador).
 - A IA nunca cria, renomeia ou sugere categorias novas; ela só escolhe entre as ativas.
-- `Category`: `name`, `slug` (chave estável usada no contrato com a IA), `kind ∈ {EXPENSE, INCOME}`,
-  `aliases` (termos que ajudam a classificação), `is_active`, `sort_order`.
-- `Subcategory`: pertence a uma `Category`; mesmos campos de `name`, `slug`, `aliases`, `is_active`.
+- `Category`: `name`, `slug` (chave estável usada no contrato com a IA), `kind ∈ {EXPENSE, INCOME, BOTH}`,
+  `description`, `aliases` (termos que ajudam a classificação), `is_active`, `sort_order`.
+  `BOTH` aceita despesas e receitas. Categoria em uso não pode mudar para um `kind`
+  incompatível com suas transações.
+- `Subcategory`: pertence a uma `Category` (herda o `kind` dela); mesmos campos de `name`, `slug`,
+  `description`, `aliases`, `is_active`. Subcategoria em uso não pode mudar de categoria.
 - Hierarquia de **dois níveis** apenas.
-- Exatamente uma categoria de fallback por `kind`: "Outros gastos" (EXPENSE) e
-  "Outras receitas" (INCOME), marcadas como fallback.
+- Categorias de fallback: "Outros gastos" (EXPENSE) e "Outras receitas" (INCOME). A marcação
+  explícita de fallback será adicionada junto com a integração de IA.
 - Desativar é a forma padrão de "remover". Exclusão física só se não houver transações
   referenciando (FK `PROTECT`). Categoria inativa não é oferecida à IA e não aceita novas
   transações, mas continua válida em transações antigas e em consultas.
@@ -77,7 +86,8 @@ Estacionamento, Manutenção.
 ### Transaction (`transactions`)
 
 Campos conceituais: `owner`, `type`, `amount`, `category`, `subcategory?`, `description`,
-`transaction_date`, `source`, `idempotency_key?`, `created_at`, `updated_at`, `deleted_at?`.
+`transaction_date`, `source`, `family?`, `idempotency_key?`, `created_at`, `updated_at`, `deleted_at?`.
+No código, o dono é o campo `user`. `source ∈ {TEXT, AUDIO, IMAGE, MANUAL, ADMIN}` (agnóstico de canal).
 
 ## 3. Política financeira
 
@@ -85,7 +95,7 @@ Campos conceituais: `owner`, `type`, `amount`, `category`, `subcategory?`, `desc
    O sinal é dado por `type`. Nunca armazenar valores negativos.
 2. Limite superior configurável (`TRANSACTION_MAX_AMOUNT`) para barrar erros de
    interpretação ("10 mil" lido como 10.000.000). Acima do limite: pedir confirmação/rejeitar.
-3. `category.kind` deve ser igual a `transaction.type`.
+3. `category.kind` deve ser igual a `transaction.type` ou `BOTH`.
 4. `subcategory`, se presente, deve pertencer a `category`.
 5. Categoria/subcategoria precisam estar ativas no momento da criação ou edição.
 6. Categoria não reconhecida pela validação → fallback do `kind` correspondente, e a
@@ -140,7 +150,7 @@ Funções de referência:
 - `can_view_user_data(actor, target_user) -> bool`: `actor == target_user` ou
   (ambos na mesma família e `actor` é ADMIN dela).
 - `can_view_family(actor, family) -> bool`: `actor` é ADMIN da família.
-- `can_modify_transaction(actor, transaction) -> bool`: `transaction.owner == actor`.
+- `can_modify_transaction(actor, transaction) -> bool`: `transaction.user == actor` (dono).
 
 Negação de acesso gera resposta neutra ("Você não tem permissão para consultar esses dados"),
 sem revelar se o alvo existe.

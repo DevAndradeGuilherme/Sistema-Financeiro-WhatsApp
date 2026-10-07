@@ -69,7 +69,7 @@ Não carregue toda a pasta `docs/` sem necessidade.
 ## Estrutura do código (prevista)
 
 ```
-config/            settings, urls, wsgi
+config/            settings/{base,runtime,test}.py, urls, wsgi
 apps/
   accounts/        User customizado, telefone E.164
   families/        Family, FamilyMember, políticas de acesso
@@ -77,7 +77,7 @@ apps/
   transactions/    Transaction, services, selectors
   ai/              cliente OpenAI, schemas, prompts (sem acesso a models de domínio)
   whatsapp/        webhook, InboundMessage, cliente Evolution, orquestração do pipeline
-common/            utilitários sem regra de negócio (dinheiro, datas, telefone, logging)
+common/            utilitários sem regra de negócio (dinheiro, datas, telefone, RLS, health)
 tests/             testes transversais/integração; testes de unidade ficam em cada app
 docs/
 ```
@@ -85,6 +85,15 @@ docs/
 Dentro de cada app, quando fizer sentido: `models.py`, `services.py` (escrita),
 `selectors.py` (leitura), `policies.py` (autorização), `admin.py`, `tests/`.
 Não criar pasta global de services. Não criar camadas/abstrações sem uso real.
+
+## Comandos
+
+```bash
+docker compose --profile test up -d test-db   # banco de testes local (nunca Supabase)
+pytest                                         # testes (config.settings.test)
+ruff check . && ruff format --check .          # lint
+python manage.py migrate | seed_categories     # banco DB_* (config.settings.runtime)
+```
 
 ## Convenções
 

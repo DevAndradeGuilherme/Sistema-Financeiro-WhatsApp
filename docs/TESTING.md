@@ -1,27 +1,48 @@
 # Testes
 
-## 1. Ferramentas (previstas para a V1.0)
+## 1. Ferramentas
 
-- `pytest` + `pytest-django` como runner.
-- PostgreSQL real em testes (container local/CI). SQLite é proibido: constraints,
-  `NUMERIC`, `ArrayField` e índices parciais precisam se comportar como em produção.
-- `ruff` para lint/format.
+- `pytest` + `pytest-django` (settings `config.settings.test`, definido no `pyproject.toml`).
+- PostgreSQL real em testes. SQLite é proibido: constraints, `NUMERIC`, `ArrayField` e
+  índices parciais precisam se comportar como em produção.
+- `ruff` para lint e formatação (configuração no `pyproject.toml`).
 - Sem rede em testes padrão: OpenAI e Evolution sempre mockados.
 
-Dependências serão adicionadas na implementação da V1.0, não antes.
+## 1.1 Como rodar
+
+```bash
+python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # Linux/macOS: .venv/bin/
+docker compose --profile test up -d test-db     # PostgreSQL 17 descartável (tmpfs) em 127.0.0.1:5433
+pytest                                           # suíte completa
+ruff check . && ruff format --check .            # lint
+```
+
+## 1.2 Banco de testes — regras de segurança
+
+- O test runner do Django **cria e destrói** um banco (`test_<NAME>`). Por isso a suíte nunca
+  usa o Supabase nem as variáveis `DB_*` da aplicação.
+- `config/settings/test.py` lê apenas `TEST_DB_*` (padrão: container local acima) e **recusa**:
+  `DJANGO_ENV=production`, qualquer host contendo `supabase` e o mesmo host/porta de `DB_*`.
+- `DJANGO_SECRET_KEY` de teste é um valor fixo inseguro, usado só por essas settings.
+- Para usar outro PostgreSQL local/CI, defina `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_USER`,
+  `TEST_DB_PASSWORD`, `TEST_DB_NAME`.
 
 ## 2. Organização
 
 ```
 apps/<app>/tests/      testes de unidade e de serviço do app
-tests/                 integração ponta a ponta (webhook → resposta)
+common/tests/          helpers (dinheiro, datas, telefone) e infraestrutura (RLS, health)
+tests/                 integração ponta a ponta (webhook → resposta) — a partir do webhook
 tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
 ```
 
 - Nome: `test_<comportamento>_<condição>` (ex.: `test_member_cannot_view_other_member_transactions`).
 - Fábricas simples (funções ou `factory_boy` se justificado). Sem fixtures globais mágicas.
-- Datas: congelar "agora" (ex.: `time-machine`/`freezegun` se adicionados, ou injeção de
-  `reference_date`). Testes não podem depender do dia em que rodam.
+- Fixtures compartilhadas em `conftest.py` na raiz (`make_user`, `alice`, `bob`, categorias,
+  `make_transaction`).
+- Datas: usar datas fixas ou relativas a `common.dates.today_local()`; para "agora", usar
+  `unittest.mock.patch("django.utils.timezone.now", ...)`. Testes não podem depender do dia
+  em que rodam.
 
 ## 3. O que testar obrigatoriamente
 

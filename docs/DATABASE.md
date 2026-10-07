@@ -13,7 +13,9 @@ PostgreSQL gerenciado pelo Supabase. Regras de negócio que motivam as constrain
 - Enums como `TextChoices` armazenados em `varchar` + `CheckConstraint` quando crítico.
 - FKs para dados financeiros usam `on_delete=PROTECT`. Nada de cascade apagando transações.
 - Agregações via ORM (`aggregate`, `annotate`) — o banco calcula.
-- Testes e desenvolvimento local usam PostgreSQL real (nunca SQLite).
+- Testes usam PostgreSQL real (nunca SQLite) em container local; ver `TESTING.md`.
+- Configuração por `DB_*` (ver `.env.example`); sem configuração a aplicação falha com
+  `ImproperlyConfigured` — não há fallback para SQLite.
 
 ## 2. Tabelas previstas
 
@@ -38,22 +40,25 @@ Nomes de campo indicativos; o agent pode ajustar nomenclatura mantendo semântic
 
 | Campo | Tipo | Regras |
 |---|---|---|
-| `family` | FK Family | `PROTECT` |
-| `user` | FK User | `UNIQUE` (um usuário, uma família — decisão inicial) |
-| `role` | varchar | `ADMIN` \| `MEMBER`; `CHECK` |
+| `family` | FK Family | `CASCADE` (membership não é dado financeiro) |
+| `user` | OneToOne User | `UNIQUE` (um usuário, uma família — decisão inicial); `CASCADE` |
+| `role` | varchar | `ADMIN` \| `MEMBER`; `CHECK`; unique parcial `(family) WHERE role='ADMIN'` |
 | `created_at` | timestamptz | |
 
 ### `categories.Category`
 
 | Campo | Tipo | Regras |
 |---|---|---|
-| `name` | varchar | |
+| `name` | varchar | `UNIQUE (lower(name))` |
 | `slug` | varchar | `UNIQUE`; chave estável no contrato com a IA; não mudar após uso |
-| `kind` | varchar | `EXPENSE` \| `INCOME`; `CHECK` |
-| `aliases` | `text[]` (ArrayField) | default vazio |
+| `kind` | varchar | `EXPENSE` \| `INCOME` \| `BOTH`; `CHECK` |
+| `description` | text | opcional |
+| `aliases` | `text[]` (ArrayField) | default vazio; normalizados (minúsculas, sem duplicatas) |
 | `is_active` | bool | default true |
-| `is_fallback` | bool | no máximo um `true` por `kind` (`UniqueConstraint` parcial) |
 | `sort_order` | int | |
+| `created_at`, `updated_at` | timestamptz | |
+
+`is_fallback` (marcação explícita de fallback) será adicionado com a integração de IA.
 
 ### `categories.Subcategory`
 
@@ -61,28 +66,28 @@ Nomes de campo indicativos; o agent pode ajustar nomenclatura mantendo semântic
 |---|---|---|
 | `category` | FK Category | `PROTECT` |
 | `name` | varchar | |
-| `slug` | varchar | `UNIQUE (category, slug)` |
-| `aliases` | `text[]` | |
-| `is_active` | bool | |
+| `slug` | varchar | `UNIQUE (category, slug)`; `UNIQUE (category, lower(name))` |
+| `description`, `aliases`, `is_active`, `sort_order`, timestamps | | como em `Category` |
 
 ### `transactions.Transaction`
 
 | Campo | Tipo | Regras |
 |---|---|---|
-| `id` | bigint ou UUID | PK |
-| `owner` | FK User | `PROTECT`; índice |
+| `id` | UUID | PK |
+| `user` | FK User | dono; `PROTECT`; índice |
+| `family` | FK Family, null | família do dono na criação (derivada pelo service); `PROTECT` |
 | `type` | varchar | `EXPENSE` \| `INCOME`; `CHECK` |
 | `amount` | `NUMERIC(14,2)` | `CHECK (amount > 0)` |
 | `category` | FK Category | `PROTECT` |
-| `subcategory` | FK Subcategory, null | `PROTECT`; pertinência à categoria validada no service |
+| `subcategory` | FK Subcategory, null | `PROTECT`; pertinência à categoria validada no service e em `Model.clean` (sem FK composta no Django) |
 | `description` | varchar(255) | pode ser vazio |
 | `transaction_date` | date | data financeira |
-| `source` | varchar | `WHATSAPP_TEXT` \| `WHATSAPP_AUDIO` \| `WHATSAPP_IMAGE` \| `ADMIN` |
-| `idempotency_key` | varchar, null | `UNIQUE` (nulos permitidos). Ex.: `whatsapp:<instance>:<message_id>` |
+| `source` | varchar | `TEXT` \| `AUDIO` \| `IMAGE` \| `MANUAL` \| `ADMIN`; `CHECK` |
+| `idempotency_key` | varchar, null | `UNIQUE` (nulos permitidos); `CHECK <> ''`. Ex.: `whatsapp:<instance>:<message_id>` |
 | `created_at`, `updated_at` | timestamptz | |
 | `deleted_at` | timestamptz, null | soft delete |
 
-Índices: `(owner, transaction_date)` e `(owner, category, transaction_date)`, considerando
+Índices: `(user, transaction_date)` e `(user, category, transaction_date)`, considerando
 índice parcial `WHERE deleted_at IS NULL` quando o volume justificar.
 
 Querysets: o manager padrão não deve esconder registros excluídos de forma implícita no
@@ -117,9 +122,11 @@ resultado da validação) ligado à `InboundMessage`, para auditoria e melhoria 
   `CONN_MAX_AGE=0` e `DISABLE_SERVER_SIDE_CURSORS=True`.
 - `sslmode=require` em ambientes remotos.
 - **Data API (PostgREST) do Supabase**: as tabelas criadas pelo Django no schema `public`
-  podem ficar expostas pela API REST do Supabase. Obrigatório: desabilitar a exposição
-  do schema na Data API **e/ou** habilitar RLS sem policies em todas as tabelas
-  (o role dono das tabelas, usado pelo Django, não é afetado). Ver `SECURITY.md`.
+  podem ficar expostas pela API REST do Supabase. Implementado: após cada `migrate`, um handler
+  `post_migrate` (`common/db.py`) habilita RLS sem policies em todas as tabelas do schema
+  (recurso padrão do PostgreSQL; o role dono das tabelas, usado pelo Django, não é afetado;
+  desligável com `DB_ENABLE_RLS=False`). Recomendado também desabilitar a exposição do schema
+  na Data API no painel. Ver `SECURITY.md`.
 - Chaves `anon`/`service_role` do Supabase nunca vão para cliente algum; `service_role`
   só no servidor e só quando o Storage for usado (V1.4).
 - Backups: usar os backups gerenciados do Supabase; confirmar plano/retenção antes da produção.
@@ -127,5 +134,6 @@ resultado da validação) ligado à `InboundMessage`, para auditoria e melhoria 
 ## 4. Migrations
 
 - Uma migration por mudança lógica; revisar SQL gerado (`sqlmigrate`) quando houver constraints.
-- Catálogo inicial de categorias via data migration idempotente (por `slug`).
+- Catálogo inicial de categorias via `python manage.py seed_categories` (não é migration:
+  idempotente por `slug`, preserva alterações do administrador).
 - Migrations destrutivas (drop de coluna/tabela com dados) exigem plano explícito no PR.

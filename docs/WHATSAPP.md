@@ -78,7 +78,7 @@ pela camada 2.
 ### Áudio — V1.3
 
 `message_type=AUDIO` → download da mídia pela Evolution → transcrição (OpenAI) →
-`InboundMessage.text` = transcrição → mesmo pipeline do texto, com `source=WHATSAPP_AUDIO`.
+`InboundMessage.text` = transcrição → mesmo pipeline do texto, com `source=AUDIO`.
 Limites de duração/tamanho configuráveis. Arquivo de áudio não precisa ser persistido
 após a transcrição, salvo decisão documentada.
 
@@ -86,7 +86,7 @@ após a transcrição, salvo decisão documentada.
 
 `message_type=IMAGE` → download → upload em bucket **privado** do Supabase Storage
 (caminho sem dados pessoais legíveis) → extração multimodal estruturada → mesma validação
-→ confirmação com o usuário → `create_transaction` com `source=WHATSAPP_IMAGE`.
+→ confirmação com o usuário → `create_transaction` com `source=IMAGE`.
 O fluxo de confirmação exato será especificado na V1.4.
 
 Toda mídia é entrada não confiável: validar MIME/tamanho, nunca executar nem renderizar.

@@ -1,0 +1,32 @@
+# Application services for local development.
+# The application database is the external Supabase PostgreSQL configured in .env (DB_*).
+# `test-db` is a disposable local PostgreSQL used ONLY by the test suite; it starts only with
+# the "test" profile:  docker compose --profile test up -d test-db
+services:
+  web:
+    build: .
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.runtime
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+  test-db:
+    profiles: ["test"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres  # local throwaway container, not a secret
+      POSTGRES_DB: controle_gastos
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
