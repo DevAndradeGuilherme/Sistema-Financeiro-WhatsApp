@@ -7,6 +7,8 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 ## [Unreleased]
 
 ### Added — V1.5: análises financeiras
+- Validação ao vivo concluída (2026-10-07): 8 consultas reais pelo WhatsApp (SELF, FAMILY,
+  FAMILY_MEMBER e follow-up), valores conferidos no banco, sem mutações. `V1_5_LIVE_VALIDATION = COMPLETE`.
 - `apps/transactions/analytics.py`: `period_summary`, `monthly_trend`, `category_trend` sobre o
   `ReadScope` autorizado (SELF/FAMILY/FAMILY_MEMBER da V1.2), agregados no PostgreSQL, DTOs em
   `Decimal`, nada persistido.

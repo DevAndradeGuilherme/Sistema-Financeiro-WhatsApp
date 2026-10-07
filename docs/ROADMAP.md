@@ -1,7 +1,7 @@
 # Roadmap
 
-Versão atual: **V1.5 implementada** (análises financeiras; validação automatizada, smoke OpenAI e
-validação integrada local concluídos em 2026-10-07; validação ao vivo pelo WhatsApp pendente).
+Versão atual: **V1.5 concluída** (análises financeiras validadas ponta a ponta pelo WhatsApp em DEV,
+2026-10-07).
 V1.4 concluída (comprovantes por imagem validados ponta a ponta em DEV, 2026-10-07).
 V1.2: validação real do fluxo MEMBER segue `PENDING_LIVE_VALIDATION` (ver status da V1.2).
 Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
@@ -97,7 +97,7 @@ Status da V1.5 (2026-10-07):
 | AUTOMATED_VALIDATION | COMPLETE (768 testes; analytics de domínio + pipeline V1.5) |
 | OPENAI_SMOKE_VALIDATION | COMPLETE (9 frases V1.5 + 4 frases antigas interpretadas corretamente) |
 | INTEGRATED_LOCAL_VALIDATION | COMPLETE (pipeline real + OpenAI + Supabase DEV, dados sintéticos revertidos, sem envio) |
-| V1_5_LIVE_VALIDATION | PENDING_LIVE_VALIDATION — falta exercitar as análises pelo WhatsApp real |
+| V1_5_LIVE_VALIDATION | COMPLETE (8 mensagens reais do ADMIN DEV: resumo, evolução 6 meses, aumentos por categoria, % da renda, resumo/evolução da família, resumo da Maria DEV e follow-up "e mês passado?"; valores conferidos por SQL, nenhuma mutação) |
 | MEMBER_LIVE_VALIDATION | PENDING_LIVE_VALIDATION (herdado da V1.2) |
 | RETENTION_POLICY | PENDING_PRODUCT_DECISION (herdado da V1.4) |
 

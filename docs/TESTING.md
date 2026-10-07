@@ -108,6 +108,10 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   (PERIOD_SUMMARY/MONTHLY_TREND/CATEGORY_TREND ponta a ponta: SELF, ADMIN família/membro, MEMBER
   negado, membro externo, contexto manipulado, perda de papel, follow-ups, `months` padrão/3/12/
   acima do máximo, 1 chamada de IA, nenhuma mutação, falha de envio sem recálculo).
+- Validação ao vivo V1.5 (2026-10-07): 8 mensagens reais pelo WhatsApp do ADMIN DEV; para cada uma,
+  `InboundMessage` PROCESSED, 1 chamada OpenAI, 1 envio, contagens de `Transaction`/`TransactionChange`
+  inalteradas e valores conferidos por SQL somente leitura no Supabase DEV (incluindo uma despesa
+  fictícia soft-deleted criada via services, que não entrou em nenhum total).
 - Validação integrada local V1.5 (manual, fora da suíte): pipeline real (`handle_ready_message`)
   + OpenAI real + Supabase DEV com usuários/família/lançamentos sintéticos, Evolution
   substituída por captura em memória e tudo dentro de um `transaction.atomic()` revertido ao
