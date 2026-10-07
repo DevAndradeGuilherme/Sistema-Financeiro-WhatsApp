@@ -161,9 +161,20 @@ def test_unresolved_lid_sender_is_ignored(client, pipeline):
     _assert_ignored(post(client, payload), Reason.SENDER_UNRESOLVED)
 
 
-def test_audio_is_recognized_but_not_processed(client, known_user, pipeline):
-    record = _assert_ignored(post(client, payloads.audio()), Reason.MEDIA_NOT_SUPPORTED)
-    assert record.message_type == MessageType.AUDIO
+def test_audio_is_routed_to_transcription(client, known_user, pipeline):
+    """V1.3: audio from a known user is reserved (RECEIVED) and handed to the audio handler
+    (download + transcription, covered in test_audio.py); the text pipeline is not called here."""
+    with mock.patch("apps.whatsapp.views.handle_audio_message") as handler:
+        response = post(client, payloads.audio())
+    assert response.status_code == 200
+    record = InboundMessage.objects.get()
+    assert (record.message_type, record.status, record.user) == (
+        MessageType.AUDIO,
+        Status.RECEIVED,
+        known_user,
+    )
+    handler.assert_called_once()
+    assert handler.call_args.args[0] == record
     pipeline.assert_not_called()
 
 

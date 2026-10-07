@@ -44,3 +44,29 @@ class OpenAIConfig:
             timeout=timeout,
             reasoning_effort=effort,
         )
+
+
+@dataclass(frozen=True)
+class TranscriptionConfig:
+    api_key: str
+    model: str
+    timeout: float
+
+    def __repr__(self) -> str:  # never expose the API key
+        return f"TranscriptionConfig(model={self.model!r}, timeout={self.timeout!r})"
+
+    @classmethod
+    def from_settings(cls) -> "TranscriptionConfig":
+        try:
+            timeout = float(_required("OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS"))
+        except ValueError as exc:
+            raise ImproperlyConfigured(
+                "OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS must be a number."
+            ) from exc
+        if timeout <= 0:
+            raise ImproperlyConfigured("OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS must be positive.")
+        return cls(
+            api_key=_required("OPENAI_API_KEY"),
+            model=_required("OPENAI_TRANSCRIPTION_MODEL"),
+            timeout=timeout,
+        )

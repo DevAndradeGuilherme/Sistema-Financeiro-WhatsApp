@@ -112,8 +112,37 @@ def _parse_message(instance: str, payload: dict) -> NormalizedMessage:
         from_me=from_me,
         is_group=is_group,
         is_broadcast=is_broadcast,
-        metadata={"provider_message_type": raw_type[:50]} if raw_type else {},
+        metadata=_metadata(raw_type, message_type, content),
     )
+
+
+def _metadata(raw_type: str, message_type: str, content: dict) -> dict[str, str]:
+    """Minimal technical metadata. For audio: *declared* duration/size (untrusted hints used
+    only to skip obviously oversized downloads; real limits are enforced on the bytes)."""
+    metadata = {"provider_message_type": raw_type[:50]} if raw_type else {}
+    if message_type == MessageType.AUDIO:
+        audio = content.get("audioMessage") if isinstance(content.get("audioMessage"), dict) else {}
+        seconds = _non_negative_int(audio.get("seconds"))
+        size = _non_negative_int(audio.get("fileLength"))
+        if seconds is not None:
+            metadata["declared_seconds"] = str(seconds)
+        if size is not None:
+            metadata["declared_bytes"] = str(size)
+        metadata["voice_note"] = "true" if audio.get("ptt") is True else "false"
+    return metadata
+
+
+def _non_negative_int(value: Any) -> int | None:
+    """Accepts 12, "12" or a protobuf Long ({"low": 12, "high": 0})."""
+    if isinstance(value, dict):
+        low, high = value.get("low"), value.get("high", 0)
+        if isinstance(low, int) and isinstance(high, int) and not isinstance(low, bool):
+            value = (high << 32) + (low & 0xFFFFFFFF)
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
 
 
 def _message_type(raw_type: str, content: dict) -> str:

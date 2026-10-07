@@ -1,7 +1,9 @@
 """Inbound message service: idempotent reservation, filtering and sender identification.
 
-Flow (docs/WHATSAPP.md): reserve the provider id (unique row) → classify → READY or IGNORED.
-A duplicate delivery stops at the reservation and never runs the rest again.
+Flow (docs/WHATSAPP.md): reserve the provider id (unique row) → classify → READY or IGNORED
+(audio from a known user stays RECEIVED until transcribed, see ``audio.py``).
+A duplicate delivery stops at the reservation and never runs the rest again — including the
+audio download and transcription.
 """
 
 import logging
@@ -31,6 +33,15 @@ class InboundResult:
     @property
     def is_ready(self) -> bool:
         return not self.duplicate and self.record.status == Status.READY
+
+    @property
+    def needs_transcription(self) -> bool:
+        return (
+            not self.duplicate
+            and self.record.status == Status.RECEIVED
+            and self.record.message_type == MessageType.AUDIO
+            and self.record.user_id is not None
+        )
 
 
 def receive_message(message: NormalizedMessage) -> InboundResult:
@@ -93,8 +104,13 @@ def _classify(record: InboundMessage, message: NormalizedMessage) -> None:
     if not user.is_active:
         return _ignore(record, Reason.INACTIVE_USER)
 
-    if message.message_type in (MessageType.AUDIO, MessageType.IMAGE):
-        return _ignore(record, Reason.MEDIA_NOT_SUPPORTED)  # V1.3 / V1.4
+    if message.message_type == MessageType.AUDIO:
+        # Filters above already ran (fromMe, group, broadcast, unknown/inactive sender), so no
+        # download happens for messages that would be ignored. Stays RECEIVED until transcribed.
+        record.save(update_fields=["sender_phone", "user", "updated_at"])
+        return None
+    if message.message_type == MessageType.IMAGE:
+        return _ignore(record, Reason.MEDIA_NOT_SUPPORTED)  # V1.4
     if message.message_type != MessageType.TEXT:
         return _ignore(record, Reason.UNSUPPORTED_TYPE)
 

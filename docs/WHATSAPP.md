@@ -106,7 +106,8 @@ Classificação em `services.receive_message`, nesta ordem (resultado → `ignor
 4. Número não cadastrado → `UNKNOWN_SENDER`. **Usuário não é criado e não há resposta**
    (evita spam e enumeração de números). Cadastro continua no Django Admin.
 5. Usuário inativo → `INACTIVE_USER`.
-6. Áudio/imagem → `MEDIA_NOT_SUPPORTED` (reconhecidos; processamento na V1.3/V1.4; sem download).
+6. Áudio de usuário ativo → fica `RECEIVED` e segue para `audio.py` (V1.3, ver §7). Imagem →
+   `MEDIA_NOT_SUPPORTED` (V1.4). Os filtros 1–5 rodam antes: nada é baixado para mensagem ignorada.
 7. Outros tipos → `UNSUPPORTED_TYPE`. Texto vazio → `EMPTY_TEXT`; > 4096 caracteres → `TEXT_TOO_LONG`.
 8. Texto de usuário ativo → `READY` (com `user` e `text`).
 
@@ -187,12 +188,39 @@ Desenvolvimento local:
 
 ## 7. Mídia (versões futuras)
 
-### Áudio — V1.3
+### Áudio — V1.3 (implementado)
 
-`message_type=AUDIO` → download da mídia pela Evolution → transcrição (OpenAI) →
-`InboundMessage.text` = transcrição → mesmo pipeline do texto, com `source=AUDIO`.
-Limites de duração/tamanho configuráveis. Arquivo de áudio não precisa ser persistido
-após a transcrição, salvo decisão documentada.
+```
+webhook (audioMessage de usuário ativo) → reserva (RECEIVED)
+  → limites declarados (seconds/fileLength do payload; dica não confiável, evita download)
+  → download: POST /chat/getBase64FromMediaMessage/{instance} {"message":{"key":{"id":<id>}},"convertToMp4":false}
+  → formato pelos bytes (OGG/Opus, MP3, M4A/MP4, WAV, WEBM) — sem conversão, sem ffmpeg
+  → 1 chamada de transcrição (OPENAI_TRANSCRIPTION_MODEL, language="pt")
+  → UPDATE ... WHERE status=RECEIVED → READY (text = transcrição) → pipeline textual existente
+```
+
+- **Download (Evolution 2.3.7):** só o id da mensagem é enviado; a Evolution busca a mensagem no
+  próprio banco (`DATABASE_SAVE_DATA_NEW_MESSAGE=true`, obrigatório) e baixa/decifra a mídia.
+  Nenhuma URL, `mediaKey`, `directPath` ou `fileName` do webhook é repassado ou acessado (sem SSRF).
+  Resposta lida com teto (`AUDIO_MAX_BYTES` em base64 + 64 KiB), `mediaType` precisa ser
+  `audioMessage`, base64 validado (`validate=True`) e tamanho checado antes e depois de decodificar.
+- **Aceito:** nota de voz (`ptt=true`) e arquivo de áudio (`audioMessage`). `documentMessage` com
+  extensão/MIME de áudio continua `UNSUPPORTED`.
+- **Limites:** `AUDIO_MAX_BYTES` (padrão 10 MiB; API aceita 25 MB) e `AUDIO_MAX_SECONDS`
+  (padrão 300 s, pela duração declarada — não há biblioteca para medir). Texto transcrito > 4096
+  caracteres é rejeitado como qualquer texto.
+- **Persistência:** nenhum byte/base64 de áudio é gravado (nem em disco: tudo em memória, o SDK
+  recebe `("audio.<ext>", bytes, content_type)` com nome e tipo definidos por nós). Só a
+  transcrição vai para `InboundMessage.text`, como qualquer mensagem `READY`. Transações de áudio
+  têm `source=AUDIO` (auditoria); as regras são as mesmas do texto.
+- **Estados/códigos:** download falhou → `FAILED` `AUDIO_DOWNLOAD_FAILED` ("Não consegui acessar
+  esse áudio..."); transcrição falhou → `FAILED` `TRANSCRIPTION_<código>` (resposta genérica);
+  limite/forma → `PROCESSED` + `AUDIO_TOO_LARGE` / `AUDIO_TOO_LONG` / `AUDIO_UNSUPPORTED_FORMAT` /
+  `EMPTY_TRANSCRIPT` / `EMPTY_AUDIO` / `TRANSCRIPT_TOO_LONG` (resposta curta, sem efeito). Nenhum
+  desses casos chama a interpretação financeira.
+- **Idempotência:** reentrega para na reserva (sem novo download/transcrição); a promoção para
+  READY é condicional (`status=RECEIVED`); depois vale a idempotência do pipeline textual.
+- **Respostas:** sempre texto (sem TTS).
 
 ### Imagem — V1.4
 

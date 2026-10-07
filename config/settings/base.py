@@ -168,6 +168,12 @@ OPENAI_TIMEOUT_SECONDS = env("OPENAI_TIMEOUT_SECONDS")
 # Optional; only sent when set (not every model accepts it). See docs/AI_CONTRACT.md.
 OPENAI_REASONING_EFFORT = env("OPENAI_REASONING_EFFORT")
 
+# Audio (V1.3): one transcription call per audio message, then the textual pipeline.
+OPENAI_TRANSCRIPTION_MODEL = env("OPENAI_TRANSCRIPTION_MODEL")
+OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS = env("OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS")
+AUDIO_MAX_BYTES = int(env("AUDIO_MAX_BYTES", str(10 * 1024 * 1024)))  # API limit is 25 MB
+AUDIO_MAX_SECONDS = int(env("AUDIO_MAX_SECONDS", "300"))  # financial messages, not meetings
+
 # Follow-up queries ("e mês passado?") reuse the last query for this long.
 CONVERSATION_CONTEXT_TTL_MINUTES = int(env("CONVERSATION_CONTEXT_TTL_MINUTES", "20"))
 

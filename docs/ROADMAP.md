@@ -1,7 +1,7 @@
 # Roadmap
 
-Versão atual: **V1.2 implementada** — validação real do fluxo MEMBER pendente (ver status da
-V1.2). V1.1 validada ponta a ponta em DEV (2026-10-07).
+Versão atual: **V1.3 concluída** (áudio validado ponta a ponta em DEV, 2026-10-07).
+V1.2: validação real do fluxo MEMBER segue `PENDING_LIVE_VALIDATION` (ver status da V1.2).
 Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
 produção **não** está pronta.
 
@@ -62,8 +62,9 @@ família gastou esse mês?" (negar) e "quanto <ADMIN> gastou esse mês?" (negar)
 
 ## V1.3 — Áudio
 
-- Recebimento de áudio, download da mídia, transcrição.
-- Reaproveitamento integral do pipeline textual (`WHATSAPP.md §6`).
+- [x] Recebimento de áudio (nota de voz e arquivo `audioMessage`), download seguro pela Evolution, transcrição (`gpt-transcribe` configurável).
+- [x] Reaproveitamento integral do pipeline textual (`WHATSAPP.md §7`); sem armazenamento de mídia.
+- [x] Validação real (2026-10-07): 5 áudios (despesa, receita, consulta, edição, desfazer) + contexto texto→áudio.
 
 ## V1.4 — Imagens
 

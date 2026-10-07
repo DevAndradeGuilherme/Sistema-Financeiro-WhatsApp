@@ -18,17 +18,19 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.ai.service import AIError, interpret_message
+from apps.transactions.models import TransactionSource
 from common.dates import today_local
 
 from . import actions, messages
 from . import context as conversation
 from .client import EvolutionClient, EvolutionError
-from .models import InboundMessage
+from .models import InboundMessage, MessageType
 from .services import mark_failed
 
 logger = logging.getLogger(__name__)
 
 Status = InboundMessage.Status
+_SOURCES = {MessageType.AUDIO: TransactionSource.AUDIO}
 REPLY_SEND_FAILED = "REPLY_SEND_FAILED"
 
 
@@ -49,7 +51,7 @@ def handle_ready_message(record: InboundMessage) -> None:
         result = interpret_message(record.text, context, log_ref=record.provider_message_id)
     except AIError as exc:
         mark_failed(record, f"AI_{exc.code}")
-        _send(record, messages.TECHNICAL_ERROR)
+        send_reply(record, messages.TECHNICAL_ERROR)
         return
 
     try:
@@ -59,7 +61,7 @@ def handle_ready_message(record: InboundMessage) -> None:
         # so there is no effect; the message becomes FAILED and the user gets a generic reply.
         logger.exception("pipeline.error provider_message_id=%s", record.provider_message_id)
         mark_failed(record, "PIPELINE_ERROR")
-        _send(record, messages.TECHNICAL_ERROR)
+        send_reply(record, messages.TECHNICAL_ERROR)
         return
     if outcome is None:
         return
@@ -71,7 +73,7 @@ def handle_ready_message(record: InboundMessage) -> None:
         outcome.code or "OK",
         "yes" if outcome.transaction else "no",
     )
-    if not _send(record, outcome.reply) and not outcome.code:
+    if not send_reply(record, outcome.reply) and not outcome.code:
         InboundMessage.objects.filter(pk=record.pk).update(error_code=REPLY_SEND_FAILED)
 
 
@@ -94,7 +96,11 @@ def _commit(
             )
             return None
         outcome = actions.execute(
-            plan, user=locked.user, idempotency_key=idempotency_key(locked), today=today
+            plan,
+            user=locked.user,
+            idempotency_key=idempotency_key(locked),
+            today=today,
+            source=_SOURCES.get(locked.message_type, TransactionSource.TEXT),
         )
         if outcome.query_context is not None:
             conversation.remember_query(locked.user, outcome.query_context)
@@ -116,7 +122,7 @@ def _commit(
     return outcome
 
 
-def _send(record: InboundMessage, text: str) -> bool:
+def send_reply(record: InboundMessage, text: str) -> bool:
     try:
         EvolutionClient().send_text(record.sender_phone, text)
         return True

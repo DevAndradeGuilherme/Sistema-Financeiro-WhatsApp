@@ -89,6 +89,15 @@ chamadas à Evolution sempre com timeout.
 - Rate limiting básico no Nginx para o endpoint de webhook.
 - Timeouts em todas as chamadas de saída (OpenAI, Evolution, Supabase).
 
+## 7.1 Áudio (V1.3)
+
+- Mídia é entrada não confiável: MIME, extensão, `fileName`, tamanho e duração declarados nunca
+  decidem nada sozinhos; formato vem dos bytes; nome enviado à OpenAI é nosso (`audio.<ext>`).
+- Sem SSRF: download só pela Evolution, pelo id da mensagem; nenhuma URL do payload é acessada.
+- Memória limitada: leitura da resposta com teto, base64 checado antes de decodificar, áudio
+  descartado após a transcrição; nenhum arquivo temporário; nada de mídia no banco ou em logs.
+- Filtros (fromMe, grupo, broadcast, remetente desconhecido/inativo) rodam antes do download.
+
 ## 8. Dados
 
 - Soft delete para transações; exclusão física apenas por processo administrativo documentado.
@@ -102,6 +111,7 @@ chamadas à Evolution sempre com timeout.
 - [ ] ADMIN consegue editar/desfazer transação de terceiro por algum caminho?
 - [ ] Alguma mutação sem registro em `TransactionChange` ou fora do `atomic` da mensagem?
 - [ ] Alguma leitura de terceiro sem passar por `transactions.scopes` (ex.: filtro por `user_id` vindo de fora)?
+- [ ] Alguma URL/caminho/nome de arquivo vindo de webhook usado para baixar ou gravar mídia?
 - [ ] Idempotência garantida por constraint, não só por `if exists`?
 - [ ] Algum `float` em dinheiro?
 - [ ] Algum segredo, telefone completo ou payload bruto em log?

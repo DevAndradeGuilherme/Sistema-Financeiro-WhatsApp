@@ -93,6 +93,13 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   ambiguidade, snapshot histórico, isolamento entre famílias, ranking em 1 query),
   `apps/whatsapp/tests/test_pipeline_v12.py` (ADMIN/MEMBER ponta a ponta, mutações em
   terceiros, contexto familiar, perda de papel) e `apps/families/tests/test_admin_v12.py`.
+- V1.3: `common/tests/test_media.py`, `apps/ai/tests/test_transcription.py`,
+  `apps/whatsapp/tests/test_client_audio.py` (download com teto, base64, sem fetch de URL do
+  payload) e `apps/whatsapp/tests/test_audio.py` (áudio → pipeline real: CREATE/INCOME/QUERY/
+  UPDATE/UNDO, família, contexto texto↔áudio, filtros antes do download, idempotência,
+  concorrência, falhas, limites, privacidade). Download/transcrição mockados na fronteira.
+- Smoke de transcrição: fixture sintética gerada por TTS fora do repositório (nunca versionar
+  áudio, muito menos voz pessoal).
 - Smoke test real (manual, fora da suíte): chamar `apps.ai.service.interpret_message` com o
   contexto real, sem persistir, e conferir intenção/valor/categoria/datas e tokens.
 

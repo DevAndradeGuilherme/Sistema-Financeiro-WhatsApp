@@ -466,12 +466,19 @@ def _parse_date(value: str | None) -> date | None:
 # --- Execution ----------------------------------------------------------------------
 
 
-def execute(plan_: Plan, *, user: User, idempotency_key: str, today: date) -> Outcome:
+def execute(
+    plan_: Plan,
+    *,
+    user: User,
+    idempotency_key: str,
+    today: date,
+    source: str = TransactionSource.TEXT,
+) -> Outcome:
     """Run the effect for ``user`` (the authenticated sender). Call inside transaction.atomic."""
     if isinstance(plan_, ReplyPlan):
         return Outcome(plan_.intent, plan_.reply, plan_.code)
     if isinstance(plan_, CreatePlan):
-        return _execute_create(plan_, user, idempotency_key, today)
+        return _execute_create(plan_, user, idempotency_key, today, source)
     if isinstance(plan_, UpdatePlan):
         return _execute_update(plan_, user, idempotency_key)
     if isinstance(plan_, UndoPlan):
@@ -479,7 +486,9 @@ def execute(plan_: Plan, *, user: User, idempotency_key: str, today: date) -> Ou
     return _execute_query(plan_, user, today)
 
 
-def _execute_create(p: CreatePlan, user: User, idempotency_key: str, today: date) -> Outcome:
+def _execute_create(
+    p: CreatePlan, user: User, idempotency_key: str, today: date, source: str
+) -> Outcome:
     try:
         txn = create_transaction(
             user=user,
@@ -489,7 +498,7 @@ def _execute_create(p: CreatePlan, user: User, idempotency_key: str, today: date
             subcategory=p.subcategory,
             description=p.description,
             transaction_date=p.transaction_date,
-            source=TransactionSource.TEXT,
+            source=source,  # audit only: TEXT or AUDIO, same rules either way
             idempotency_key=idempotency_key,
         )
     except ValidationError as exc:

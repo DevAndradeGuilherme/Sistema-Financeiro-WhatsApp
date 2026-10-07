@@ -6,6 +6,19 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — V1.3: áudio → transcrição → pipeline textual
+- `apps/ai/transcription.py` (1 chamada, `language="pt"`, modelo `OPENAI_TRANSCRIPTION_MODEL`,
+  timeout `OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS`, erros sanitizados, logs só com métricas).
+- `EvolutionClient.download_audio` via `getBase64FromMediaMessage` por id, leitura com teto e base64 validado.
+- `apps/whatsapp/audio.py`: limites (`AUDIO_MAX_BYTES`, `AUDIO_MAX_SECONDS`), formato pelos bytes
+  (`common/media.py`), promoção condicional RECEIVED → READY e o pipeline textual existente.
+- Transações vindas de áudio com `source=AUDIO`; respostas continuam em texto.
+
+### Changed
+- Áudio de usuário conhecido deixa de ser `IGNORED/MEDIA_NOT_SUPPORTED` (imagem continua).
+- Teste de privacidade do contexto passou a usar asserção estrutural (a checagem por substring do pk era instável).
+
+
 ### Fixed — auditoria V1.0–V1.2
 - O service e o Django Admin de famílias não permitem mais criar/manter membros sem o ADMIN
   obrigatório nem remover o último ADMIN isoladamente.

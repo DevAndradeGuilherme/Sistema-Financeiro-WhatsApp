@@ -164,6 +164,23 @@ Todas: nenhuma transação, mensagem `FAILED`, resposta genérica ao usuário, s
 `ai.interpret ref model prompt contract outcome intent duration_ms input_tokens output_tokens`.
 Nunca: API key, prompt, texto da mensagem, objeto estruturado.
 
+## 7.1 Transcrição de áudio (V1.3)
+
+- `apps/ai/transcription.transcribe_audio(bytes, filename, content_type)`: SDK oficial,
+  `client.audio.transcriptions.create(model=OPENAI_TRANSCRIPTION_MODEL, language="pt",
+  response_format="json")`, `max_retries=0`, timeout `OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS`.
+  Sem Realtime, sem translation, sem prompt (testes reais não mostraram necessidade), sem catálogo
+  nem dados pessoais. Modelo sempre da configuração; sem fallback para outro modelo.
+- Por mensagem de áudio: **1 transcrição + 1 interpretação** (a mesma do texto). O transcript
+  não é "limpo" por outro modelo.
+- Erros mapeados com os mesmos códigos da interpretação (`TIMEOUT`, `AUTH`, `PERMISSION`,
+  `RATE_LIMIT`, `BAD_REQUEST` p/ arquivo inválido, `MODEL_UNAVAILABLE`, `PROVIDER_ERROR`) +
+  `EMPTY_AUDIO`, `EMPTY_TRANSCRIPT`, `INVALID_OUTPUT`.
+- Logs: `ai.transcribe ref model outcome duration_ms bytes` + usage (`seconds` ou tokens). Nunca
+  o transcript ou o áudio.
+- Validado ao vivo com `gpt-transcribe`: OGG/Opus aceito diretamente; uso reportado por duração
+  (`usage.seconds`); ~0,8–2 s por áudio curto.
+
 ## 8. Testes
 
 Unitários com cliente fake (`apps/ai/tests`); integração do pipeline com `interpret_message`

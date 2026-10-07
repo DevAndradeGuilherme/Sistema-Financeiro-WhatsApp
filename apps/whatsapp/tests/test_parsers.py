@@ -150,3 +150,54 @@ def test_repr_hides_content_and_phone():
     msg = parse_evolution_event(payloads.text("segredo financeiro")).message
     assert "segredo" not in repr(msg)
     assert "5531" not in repr(msg)
+
+
+def test_voice_note_metadata_is_parsed():
+    payload = payloads.upsert(
+        message_type="audioMessage",
+        message={
+            "audioMessage": {
+                "mimetype": "audio/ogg; codecs=opus",
+                "seconds": 7,
+                "ptt": True,
+                "fileLength": {"low": 12345, "high": 0, "unsigned": True},
+                "url": "https://mmg.whatsapp.net/x",
+            }
+        },
+    )
+    msg = parse_evolution_event(payload).message
+    assert msg.message_type == MessageType.AUDIO
+    assert msg.metadata == {
+        "provider_message_type": "audioMessage",
+        "declared_seconds": "7",
+        "declared_bytes": "12345",
+        "voice_note": "true",
+    }
+    assert "mmg.whatsapp.net" not in str(msg.metadata)  # media URLs never leave the parser
+
+
+def test_audio_file_without_ptt_is_audio_and_document_is_not():
+    audio_file = payloads.upsert(
+        message_type="audioMessage",
+        message={"audioMessage": {"mimetype": "audio/mpeg", "fileLength": "999"}},
+    )
+    msg = parse_evolution_event(audio_file).message
+    assert (msg.message_type, msg.metadata["voice_note"], msg.metadata["declared_bytes"]) == (
+        MessageType.AUDIO,
+        "false",
+        "999",
+    )
+    document = payloads.upsert(
+        message_type="documentMessage",
+        message={"documentMessage": {"mimetype": "audio/ogg", "fileName": "a.ogg"}},
+    )
+    assert parse_evolution_event(document).message.message_type == MessageType.UNSUPPORTED
+
+
+@pytest.mark.parametrize("bad", [-5, "abc", True, {"low": "x"}, None])
+def test_invalid_declared_audio_values_are_dropped(bad):
+    payload = payloads.upsert(
+        message_type="audioMessage", message={"audioMessage": {"seconds": bad, "fileLength": bad}}
+    )
+    metadata = parse_evolution_event(payload).message.metadata
+    assert "declared_seconds" not in metadata and "declared_bytes" not in metadata

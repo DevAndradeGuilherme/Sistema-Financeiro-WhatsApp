@@ -17,6 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from . import conf
+from .audio import handle_audio_message
 from .parsers import InvalidPayload, parse_evolution_event
 from .pipeline import handle_ready_message
 from .services import mark_failed, receive_message
@@ -73,5 +74,12 @@ def evolution_webhook(request: HttpRequest) -> JsonResponse:
             # Reserved already: a retry would be a no-op, so answer 200 and keep it FAILED.
             logger.exception("webhook.pipeline_error event=%s", event.event)
             mark_failed(result.record, "PIPELINE_ERROR")
+    elif result.needs_transcription:
+        try:
+            handle_audio_message(result.record, event.message)
+        except Exception:
+            logger.exception("webhook.audio_error event=%s", event.event)
+            mark_failed(result.record, "AUDIO_PIPELINE_ERROR")
+        result.record.refresh_from_db(fields=["status"])
 
     return JsonResponse({"status": result.record.status.lower()})

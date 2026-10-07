@@ -550,8 +550,18 @@ def test_ai_receives_only_text_and_catalog(client, alice, catalog, ai, evolution
     text, context = ai.call_args.args
     assert text == "ajuda"
     instructions = build_instructions(context)
-    for private in ("+5531999990001", "5531999990001", "alice", str(alice.pk)):
+    for private in ("+5531999990001", "5531999990001", "alice"):
         assert private not in repr(context)
+    # Structural guarantee (a substring check on the numeric pk would be flaky): the context
+    # has no user-related field at all.
+    from dataclasses import fields
+
+    assert {f.name for f in fields(context)} == {
+        "reference_date",
+        "timezone",
+        "catalog",
+        "previous_query",
+    }
     assert "+5531999990001" not in instructions
     assert "alice" not in instructions
     assert context.timezone == "America/Sao_Paulo"

@@ -4,8 +4,11 @@ Uses only the standard library (urllib). Every call has a timeout. The API key i
 ``apikey`` header and never appears in exceptions, reprs or logs.
 """
 
+import base64
+import binascii
 import json
 import logging
+import re
 import socket
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +47,23 @@ class EvolutionHTTPError(EvolutionError):
 
 class EvolutionResponseError(EvolutionError):
     """Successful status but unexpected body."""
+
+
+class MediaTooLargeError(EvolutionError):
+    """Media (or the response carrying it) exceeds the configured limit; nothing was decoded."""
+
+
+_MESSAGE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_JSON_OVERHEAD = 64 * 1024
+
+
+@dataclass(frozen=True)
+class DownloadedMedia:
+    data: bytes
+    declared_mimetype: str  # informative only; never trusted for format decisions
+
+    def __repr__(self) -> str:  # never dump media bytes
+        return f"DownloadedMedia(bytes={len(self.data)})"
 
 
 @dataclass(frozen=True)
@@ -93,6 +113,46 @@ class EvolutionClient:
         )
         return sent
 
+    def download_audio(self, message_id: str, *, max_bytes: int) -> DownloadedMedia:
+        """Audio of a received message, via ``POST /chat/getBase64FromMediaMessage/{instance}``.
+
+        Only the message id is sent: Evolution looks the message up in its own database and
+        downloads/decrypts the media itself. No URL, media key or path from the webhook is
+        forwarded (no SSRF surface). The response is read with a hard size cap and the base64
+        is validated and size-checked before and after decoding.
+        """
+        if not isinstance(message_id, str) or not _MESSAGE_ID_RE.match(message_id):
+            raise ValueError("Invalid message id.")
+        body = {"message": {"key": {"id": message_id}}, "convertToMp4": False}
+        data = self._request(
+            "POST",
+            f"/chat/getBase64FromMediaMessage/{self._instance()}",
+            body,
+            max_response_bytes=_base64_length(max_bytes) + _JSON_OVERHEAD,
+        )
+        if data.get("mediaType") != "audioMessage":
+            raise EvolutionResponseError("Media is not an audio message.")
+        encoded = data.get("base64")
+        if not isinstance(encoded, str) or not encoded.strip():
+            raise EvolutionResponseError("Empty media.")
+        encoded = encoded.strip()
+        if encoded.startswith("data:"):
+            encoded = encoded.split(",", 1)[-1]
+        if len(encoded) > _base64_length(max_bytes):
+            raise MediaTooLargeError("Media exceeds the configured limit.")
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            raise EvolutionResponseError("Invalid base64 media.") from None
+        if not raw:
+            raise EvolutionResponseError("Empty media.")
+        if len(raw) > max_bytes:
+            raise MediaTooLargeError("Media exceeds the configured limit.")
+        mimetype = data.get("mimetype")
+        return DownloadedMedia(
+            data=raw, declared_mimetype=mimetype[:100] if isinstance(mimetype, str) else ""
+        )
+
     def find_webhook(self) -> dict[str, Any]:
         """Current webhook config. Contains the secret header: never print it as is."""
         return self._request("GET", f"/webhook/find/{self._instance()}")
@@ -116,7 +176,14 @@ class EvolutionClient:
     def _instance(self) -> str:
         return quote(self.config.instance, safe="")
 
-    def _request(self, method: str, path: str, body: dict | None = None) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        *,
+        max_response_bytes: int | None = None,
+    ) -> dict[str, Any]:
         headers = {"apikey": self.config.api_key, "Accept": "application/json"}
         data = None
         if body is not None:
@@ -128,7 +195,12 @@ class EvolutionClient:
 
         try:
             with urlopen(request, timeout=self.config.timeout) as response:  # noqa: S310
-                raw = response.read()
+                if max_response_bytes is None:
+                    raw = response.read()
+                else:
+                    raw = response.read(max_response_bytes + 1)  # never unbounded in memory
+                    if len(raw) > max_response_bytes:
+                        raise MediaTooLargeError("Evolution response exceeds the size limit.")
         except HTTPError as exc:
             detail = _error_detail(exc)
             exc.close()
@@ -170,3 +242,7 @@ def _error_detail(exc: HTTPError) -> str:
     if isinstance(message, list):
         message = "; ".join(str(m) for m in message)
     return str(message or body.get("error") or "")[:_MAX_ERROR_DETAIL]
+
+
+def _base64_length(size: int) -> int:
+    return 4 * ((size + 2) // 3)

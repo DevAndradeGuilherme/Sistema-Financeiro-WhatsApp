@@ -108,7 +108,8 @@ Essa mudança exige registro na seção 8.
 ### Áudio (V1.3) e imagem (V1.4)
 
 ```
-Áudio:  Evolution → download da mídia → transcrição → texto → passo 5 em diante (mesmo pipeline)
+Áudio (V1.3 ✅): Evolution → download (por id, autenticado) → transcrição (1 chamada) → texto
+        → READY → passo 5 em diante (mesmo pipeline; `whatsapp/audio.py`, `ai/transcription.py`)
 Imagem: Evolution → download → (Supabase Storage) → extração multimodal estruturada
         → mesma validação Django → mesmo transactions.services.create_transaction
 ```
@@ -186,3 +187,7 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-07 — Dado familiar = snapshot `Transaction.family`; consulta por membro exige membership atual — sem reatribuição retroativa de histórico.
 - 2026-10-07 — Nenhuma lista de membros enviada à IA; nome resolvido no Django dentro da família — privacidade e tokens.
 - 2026-10-07 — Django Admin: troca de ADMIN só pelo formulário da família (rebaixa antes de promover); ADMIN não pode ser rebaixado/excluído isoladamente com membros na família.
+- 2026-10-07 — Áudio = transporte: `audio.py` (download/limites) + `ai.transcription` (1 chamada, `language="pt"`), depois o pipeline textual inalterado — sem segundo domínio.
+- 2026-10-07 — Download de mídia só por id via `getBase64FromMediaMessage` (Evolution consulta o próprio banco) — nenhuma URL do webhook é acessada.
+- 2026-10-07 — OGG/Opus enviado sem conversão (aceito pela API, validado ao vivo) — sem ffmpeg; formato detectado pelos bytes.
+- 2026-10-07 — Áudio aguardando transcrição permanece `RECEIVED`; rejeições de limite usam `PROCESSED` + código — sem novos estados nem migration.

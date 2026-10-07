@@ -46,7 +46,8 @@ class InterpretationResult:
     usage: dict[str, int] = field(default_factory=dict)
 
 
-def build_client(config: OpenAIConfig) -> openai.OpenAI:
+def build_client(config) -> openai.OpenAI:
+    """SDK client for any of our configs (``api_key`` + ``timeout``). Never retries."""
     return openai.OpenAI(api_key=config.api_key, timeout=config.timeout, max_retries=0)
 
 
@@ -88,7 +89,7 @@ def interpret_message(
         _log(log_ref, config.model, started, outcome=exc.code)
         raise
     except openai.OpenAIError as exc:
-        code = _error_code(exc)
+        code = error_code(exc)
         _log(log_ref, config.model, started, outcome=code)
         raise AIError(code) from None
 
@@ -131,7 +132,8 @@ def _extract(response) -> Interpretation:
         raise AIError("INVALID_OUTPUT") from None
 
 
-def _error_code(exc: Exception) -> str:
+def error_code(exc: Exception) -> str:
+    """Sanitized code for an OpenAI SDK error (shared with transcription)."""
     # Order matters: APITimeoutError subclasses APIConnectionError.
     mapping = (
         (openai.APITimeoutError, "TIMEOUT"),
