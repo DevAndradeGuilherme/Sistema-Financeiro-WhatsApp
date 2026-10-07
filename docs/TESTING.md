@@ -102,6 +102,16 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   animação, EXIF/GPS), `common/tests/test_storage.py`, `apps/ai/tests/test_vision.py` e
   `apps/whatsapp/tests/test_image.py` (pipeline real com Pillow e domínio; Evolution, Storage e
   visão mockados nos clients; idempotência, concorrência, falhas, privacidade).
+- V1.5: `apps/transactions/tests/test_analytics.py` (resumo, evolução mensal, variação por
+  categoria, percentuais `Decimal`, receitas = 0, saldo negativo, >100%, soft delete, edição,
+  escopos FAMILY/FAMILY_MEMBER, agregação no banco) e `apps/whatsapp/tests/test_pipeline_v15.py`
+  (PERIOD_SUMMARY/MONTHLY_TREND/CATEGORY_TREND ponta a ponta: SELF, ADMIN família/membro, MEMBER
+  negado, membro externo, contexto manipulado, perda de papel, follow-ups, `months` padrão/3/12/
+  acima do máximo, 1 chamada de IA, nenhuma mutação, falha de envio sem recálculo).
+- Validação integrada local V1.5 (manual, fora da suíte): pipeline real (`handle_ready_message`)
+  + OpenAI real + Supabase DEV com usuários/família/lançamentos sintéticos, Evolution
+  substituída por captura em memória e tudo dentro de um `transaction.atomic()` revertido ao
+  final (nada persiste, nada é enviado). Não substitui a validação ao vivo pelo WhatsApp.
 - Smokes V1.4: `storage_check --write-test` (objeto sintético removido ao final) e comprovantes
   sintéticos gerados em memória; nunca versionar imagens.
 - Smoke de transcrição: fixture sintética gerada por TTS fora do repositório (nunca versionar

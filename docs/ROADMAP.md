@@ -1,6 +1,8 @@
 # Roadmap
 
-Versão atual: **V1.4 concluída** (comprovantes por imagem validados ponta a ponta em DEV, 2026-10-07).
+Versão atual: **V1.5 implementada** (análises financeiras; validação automatizada, smoke OpenAI e
+validação integrada local concluídos em 2026-10-07; validação ao vivo pelo WhatsApp pendente).
+V1.4 concluída (comprovantes por imagem validados ponta a ponta em DEV, 2026-10-07).
 V1.2: validação real do fluxo MEMBER segue `PENDING_LIVE_VALIDATION` (ver status da V1.2).
 Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
 produção **não** está pronta.
@@ -78,9 +80,29 @@ família gastou esse mês?" (negar) e "quanto <ADMIN> gastou esse mês?" (negar)
 
 ## V1.5 — Análises
 
-- Resumos, breakdown por categoria (`CATEGORY_BREAKDOWN`), comparação de períodos,
-  maiores gastos, análises familiares autorizadas.
-- Preparação para relatórios posteriores.
+- [x] Resumo do período (`PERIOD_SUMMARY`): receitas, despesas, saldo, contagens, gasto médio,
+  maior gasto/receita, 3 principais categorias, % da renda gasta e % economizado.
+- [x] Evolução mensal (`MONTHLY_TREND`): gastos, receitas ou saldo mês a mês (1–12 meses, padrão 6).
+- [x] Variação por categoria (`CATEGORY_TREND`): aumentos, reduções ou todas as variações.
+- [x] `TOP` de receitas ("maior entrada"); breakdown/comparação/maiores gastos já existentes (V1.1).
+- [x] Análises familiares autorizadas pelos mesmos escopos da V1.2 (sem caminho novo de autorização).
+- [x] Índice `(family, transaction_date)` (migration `transactions/0003`, aplicada no Supabase DEV).
+- Relatórios persistidos/PDF continuam fora do escopo (nenhuma tabela de relatório criada).
+
+Status da V1.5 (2026-10-07):
+
+| Item | Status |
+|---|---|
+| IMPLEMENTATION_STATUS | COMPLETE |
+| AUTOMATED_VALIDATION | COMPLETE (768 testes; analytics de domínio + pipeline V1.5) |
+| OPENAI_SMOKE_VALIDATION | COMPLETE (9 frases V1.5 + 4 frases antigas interpretadas corretamente) |
+| INTEGRATED_LOCAL_VALIDATION | COMPLETE (pipeline real + OpenAI + Supabase DEV, dados sintéticos revertidos, sem envio) |
+| V1_5_LIVE_VALIDATION | PENDING_LIVE_VALIDATION — falta exercitar as análises pelo WhatsApp real |
+| MEMBER_LIVE_VALIDATION | PENDING_LIVE_VALIDATION (herdado da V1.2) |
+| RETENTION_POLICY | PENDING_PRODUCT_DECISION (herdado da V1.4) |
+
+Limitação conhecida: `CATEGORY_TREND` sem período explícito compara o mês corrente até hoje com
+o mês anterior completo (mesma semântica do `COMPARE`); ver `DOMAIN.md §4`.
 
 ## Fora do roadmap atual
 

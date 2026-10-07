@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-CONTRACT_VERSION = "v1.2"
+CONTRACT_VERSION = "v1.5"
 
 INTENTS = (
     "CREATE_TRANSACTION",
@@ -21,7 +21,20 @@ INTENTS = (
     "UNKNOWN",
 )
 TRANSACTION_TYPES = ("EXPENSE", "INCOME")
-QUERY_KINDS = ("TOTAL", "BALANCE", "TOP", "BREAKDOWN", "LIST", "COMPARE", "RANKING")
+QUERY_KINDS = (
+    "TOTAL",
+    "BALANCE",
+    "TOP",
+    "BREAKDOWN",
+    "LIST",
+    "COMPARE",
+    "RANKING",
+    "PERIOD_SUMMARY",
+    "MONTHLY_TREND",
+    "CATEGORY_TREND",
+)
+TREND_METRICS = ("EXPENSE", "INCOME", "BALANCE")
+TREND_DIRECTIONS = ("INCREASE", "DECREASE", "ALL")
 # Semantic hint only ("whose money the message talks about"). Never an authorization.
 SCOPES = ("SELF", "FAMILY", "FAMILY_MEMBER")
 
@@ -69,6 +82,9 @@ OUTPUT_SCHEMA: dict = _object(
         "follow_up": {"type": "boolean"},
         "scope": _nullable("string", enum=[*SCOPES, None]),
         "target_member_name": _nullable("string"),
+        "months": _nullable("integer"),
+        "trend_metric": _nullable("string", enum=[*TREND_METRICS, None]),
+        "trend_direction": _nullable("string", enum=[*TREND_DIRECTIONS, None]),
         "transaction_type": _TYPE,
         "amount": _nullable("string"),
         "description": _nullable("string"),
@@ -167,6 +183,9 @@ class Interpretation:
     updates: TransactionUpdates | None = None
     scope: str | None = None
     target_member_name: str | None = None
+    months: int | None = None
+    trend_metric: str | None = None
+    trend_direction: str | None = None
 
     def __repr__(self) -> str:  # keep amounts/descriptions out of logs and tracebacks
         return f"Interpretation(intent={self.intent!r}, query_kind={self.query_kind!r})"
@@ -244,6 +263,9 @@ def parse_output(data: Any) -> Interpretation:
         follow_up=r.boolean("follow_up"),
         scope=r.text("scope", SCOPES),
         target_member_name=r.text("target_member_name"),
+        months=r.integer("months"),
+        trend_metric=r.text("trend_metric", TREND_METRICS),
+        trend_direction=r.text("trend_direction", TREND_DIRECTIONS),
         transaction_type=r.text("transaction_type", TRANSACTION_TYPES),
         amount=r.text("amount"),
         description=r.text("description"),

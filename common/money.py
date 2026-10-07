@@ -1,6 +1,6 @@
 """Money helpers. Money is always Decimal; float is rejected."""
 
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 TWO_PLACES = Decimal("0.01")
 
@@ -44,3 +44,19 @@ def has_at_most_two_places(value: Decimal) -> bool:
         return value == value.quantize(TWO_PLACES)
     except InvalidOperation:
         return False
+
+
+ONE_DECIMAL = Decimal("0.1")
+
+
+def percent(numerator: Decimal, denominator: Decimal) -> Decimal | None:
+    """``numerator / denominator * 100`` with one decimal place, ROUND_HALF_UP, in Decimal.
+
+    None when the denominator is zero (never divides by zero). Values above 100% or negative
+    are returned as they are (e.g. expenses greater than income).
+    """
+    if denominator == 0:
+        return None
+    return (Decimal(numerator) / Decimal(denominator) * 100).quantize(
+        ONE_DECIMAL, rounding=ROUND_HALF_UP
+    )

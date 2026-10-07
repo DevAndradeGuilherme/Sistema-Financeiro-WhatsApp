@@ -2,7 +2,7 @@
 
 from .contract import CatalogCategory, InterpretationContext
 
-PROMPT_VERSION = "2026-10-07.3"
+PROMPT_VERSION = "2026-10-07.4"
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -13,23 +13,23 @@ Today: {today} ({weekday}). Timezone: {timezone}.
 
 intent:
 - CREATE_TRANSACTION: the user reports money spent (EXPENSE) or received (INCOME).
-- QUERY_TRANSACTIONS: the user asks about money. query_kind: TOTAL = sum of \
-expenses or income (set transaction_type); BALANCE = income minus expenses; TOP = largest \
-single expenses ("maiores gastos"); BREAKDOWN = totals per category ("onde mais gastei", \
-"por categoria"); LIST = list transactions ("últimos gastos"); \
-COMPARE = period A (start/end) vs period B (compare_start/compare_end); RANKING = totals \
-per person ("quem gastou mais", "quanto cada pessoa gastou").
-- UPDATE_TRANSACTION: correct an existing transaction. reference = how the user identifies \
-it (last=true for "último"/"muda para 15" without criteria); updates = only the new values.
-- UNDO_TRANSACTION: undo/cancel the last action ("desfazer", "cancela o último").
-- HELP: asks how to use the bot.
-- UNKNOWN: anything else.
+- QUERY_TRANSACTIONS: asks about money. query_kind: TOTAL (sum; set transaction_type); \
+BALANCE; TOP (largest single items; "maior gasto/entrada" = limit 1 + transaction_type); \
+BREAKDOWN (per category, "onde mais gastei"); LIST ("últimos gastos"); COMPARE (period A \
+start/end vs B compare_start/compare_end); RANKING (per person, "quem gastou mais"); \
+PERIOD_SUMMARY ("resumo", "como foi meu mês", "% da renda gasta"); MONTHLY_TREND (month by \
+month or monthly average; months if stated; trend_metric EXPENSE/INCOME/BALANCE); \
+CATEGORY_TREND (per-category change vs previous period, periods as COMPARE; \
+trend_direction INCREASE "aumentaram"/DECREASE "gastei menos"/ALL).
+- UPDATE_TRANSACTION: correct a transaction. reference = how it is identified (last=true \
+for "último" or no criteria); updates = only the new values.
+- UNDO_TRANSACTION: "desfazer", "cancela o último".
+- HELP: how to use the bot. UNKNOWN: anything else.
 
-scope (whose money; you only classify, the app decides permissions): SELF = the sender's \
-own ("eu", "meu", default); FAMILY = the whole family ("minha família", "a gente", "nós", \
-"todos", "gastamos", RANKING); FAMILY_MEMBER = one named person: set target_member_name \
-to the name as written ("Maria", "João Silva"). Use the same scope/name for any intent \
-that names another person (e.g. "registre 50 para a Maria", "edita o gasto da Maria").
+scope (whose money; you only classify, the app decides permissions): SELF (default, \
+"meu"); FAMILY ("minha família", "a gente", "gastamos", RANKING); FAMILY_MEMBER (one named \
+person; target_member_name as written, e.g. "Maria"). Also for any intent naming another \
+person ("registre 50 para a Maria").
 
 Rules:
 - amount: decimal string with dot, no currency ("R$ 10,50" -> "10.50", "dez reais" -> \

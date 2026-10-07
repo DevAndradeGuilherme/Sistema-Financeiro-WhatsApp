@@ -68,13 +68,14 @@ resultado possível é uma proposta inválida, rejeitada pela validação.
 | `HELP` | V1.0 ✅ | Ajuda (resposta local fixa) |
 | `UNKNOWN` | V1.0 ✅ | Não identificado, fora do escopo ou sobre dados/lançamentos de outra pessoa |
 | (família) | V1.2 ✅ | Consultas com `scope` `FAMILY`/`FAMILY_MEMBER` e `query_kind` `RANKING` (totais por pessoa) |
+| (análises) | V1.5 ✅ | `query_kind` `PERIOD_SUMMARY` (resumo, "% da renda gasta"), `MONTHLY_TREND` (mês a mês), `CATEGORY_TREND` (variação por categoria); `TOP` aceita `INCOME` ("maior entrada") |
 
 `COMPARE_PERIODS`, `TOP_EXPENSES` e `CATEGORY_BREAKDOWN` foram modelados como `query_kind`
 (mesma intenção de consulta) em vez de intenções separadas.
 
 O enum do schema contém apenas as intenções da versão corrente.
 
-## 4. Schema de saída (`contract_version v1.2`)
+## 4. Schema de saída (`contract_version v1.5`)
 
 Todos os campos presentes; ausência = `null` (requisito do modo estrito). `additionalProperties: false`.
 
@@ -87,7 +88,7 @@ Todos os campos presentes; ausência = `null` (requisito do modo estrito). `addi
 | `category_id` | integer \| null | id do catálogo fornecido |
 | `subcategory_id` | integer \| null | id do catálogo fornecido |
 | `transaction_date` | string \| null | `YYYY-MM-DD`, só se mencionada |
-| `query_kind` | `TOTAL` \| `BALANCE` \| null | |
+| `query_kind` | `TOTAL` \| `BALANCE` \| `TOP` \| `BREAKDOWN` \| `LIST` \| `COMPARE` \| `RANKING` \| `PERIOD_SUMMARY` \| `MONTHLY_TREND` \| `CATEGORY_TREND` \| null | |
 | `start_date`, `end_date` | string \| null | `YYYY-MM-DD`, intervalo fechado (período A em `COMPARE`) |
 | `compare_start_date`, `compare_end_date` | string \| null | período B em `COMPARE` |
 | `limit` | integer \| null | só se o usuário pedir ("5 maiores"); Django aplica padrão 5, máximo 10 |
@@ -97,6 +98,9 @@ Todos os campos presentes; ausência = `null` (requisito do modo estrito). `addi
 
 | `scope` | `SELF` \| `FAMILY` \| `FAMILY_MEMBER` \| null | V1.2: de quem é o dinheiro citado (semântica; null = SELF) |
 | `target_member_name` | string \| null | V1.2: nome como escrito ("Maria"); resolvido pelo Django dentro da família |
+| `months` | integer \| null | V1.5 `MONTHLY_TREND`: meses pedidos; Django aplica padrão 6, mínimo 1, máximo 12 |
+| `trend_metric` | `EXPENSE` \| `INCOME` \| `BALANCE` \| null | V1.5 `MONTHLY_TREND` (null → `transaction_type` → `EXPENSE`) |
+| `trend_direction` | `INCREASE` \| `DECREASE` \| `ALL` \| null | V1.5 `CATEGORY_TREND` (null → `ALL`) |
 
 Objetos aninhados também são estritos (`additionalProperties: false`, todos os campos
 obrigatórios). Não existem `transaction_id`, `target_user_id`, `target_phone`, `user_id`,
@@ -144,6 +148,12 @@ testes de contrato e `CHANGELOG.md`.
 11. V1.2: `scope`/`target_member_name` viram um `ReadScope` em `transactions.scopes` na execução
     (dentro do `atomic`): `FAMILY`/`FAMILY_MEMBER`/`RANKING` exigem ser o ADMIN atual; nome
     presente com `SELF` é tratado como `FAMILY_MEMBER`; `RANKING` é sempre `FAMILY`.
+12. V1.5: análises usam `apps.transactions.analytics` com o mesmo `ReadScope` (item 11).
+    `months` fora de 1..12 → padrão (≤ 0/null) ou limitado a 12 (resposta avisa);
+    `CATEGORY_TREND` sem período B = mês anterior completo (mesma regra do `COMPARE`, ver
+    limitação em `DOMAIN.md §4`); categoria inválida → "não encontrei". A IA só classifica: os
+    valores e percentuais são calculados no banco/`Decimal` e o texto é montado localmente.
+    O contexto de follow-up guarda também `months`, `trend_metric` e `trend_direction` validados.
 
 ## 6. Falhas
 

@@ -6,6 +6,23 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — V1.5: análises financeiras
+- `apps/transactions/analytics.py`: `period_summary`, `monthly_trend`, `category_trend` sobre o
+  `ReadScope` autorizado (SELF/FAMILY/FAMILY_MEMBER da V1.2), agregados no PostgreSQL, DTOs em
+  `Decimal`, nada persistido.
+- Contrato de IA `v1.5`: `query_kind` `PERIOD_SUMMARY`, `MONTHLY_TREND`, `CATEGORY_TREND` e
+  campos `months`, `trend_metric`, `trend_direction` (validados no Django; guardados no contexto).
+- Respostas locais curtas e neutras em `whatsapp/messages.py` (sem aconselhamento).
+- `common.money.percent` (Decimal, 1 casa, ROUND_HALF_UP, `None` com denominador zero).
+- Migration `transactions/0003`: índice `(family, transaction_date)` (aplicada no Supabase DEV).
+- Testes: `test_analytics.py` e `test_pipeline_v15.py`.
+
+### Changed
+- `TOP` aceita `INCOME` ("maior entrada"); com 1 item a resposta é "Maior gasto/entrada ...".
+- `COMPARE` passou a usar `common.money.percent` (mesmo resultado).
+- Prompt `2026-10-07.4` compactado (descrições de `query_kind`/`scope` mais curtas).
+- Limitação conhecida: `CATEGORY_TREND` padrão = mês corrente até hoje × mês anterior completo.
+
 ### Added — V1.4: comprovantes por imagem
 - `common/images.py` (Pillow 12.3): formato pelos bytes, limites de bytes/pixels, EXIF/GPS removidos, SHA-256.
 - `common/storage.py`: cliente REST mínimo do Supabase Storage (bucket privado, sem sobrescrita);

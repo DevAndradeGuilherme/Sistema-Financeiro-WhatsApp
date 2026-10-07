@@ -23,6 +23,10 @@ VALID = {
     # v1.2 fields
     "scope": None,
     "target_member_name": None,
+    # v1.5 fields
+    "months": None,
+    "trend_metric": None,
+    "trend_direction": None,
 }
 
 

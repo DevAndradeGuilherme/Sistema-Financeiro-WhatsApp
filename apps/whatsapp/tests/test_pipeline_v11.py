@@ -426,6 +426,9 @@ def test_model_cannot_supply_transaction_id():
         "updates": None,
         "scope": None,  # v1.2
         "target_member_name": None,  # v1.2
+        "months": None,  # v1.5
+        "trend_metric": None,  # v1.5
+        "trend_direction": None,  # v1.5
     }
     from apps.ai.contract import InvalidOutput
 
@@ -508,6 +511,10 @@ def test_period_follow_up(client, alice, catalog, spending, ai, evolution):
         # v1.2: whose data (semantics only; re-authorized on every query)
         "scope",
         "target_member_name",
+        # v1.5: analytics semantics (validated values)
+        "months",
+        "trend_metric",
+        "trend_direction",
     }
     assert context.previous_query["scope"] == "SELF"
 

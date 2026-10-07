@@ -111,6 +111,8 @@ class Transaction(models.Model):
                 fields=["user", "category", "transaction_date"],
                 name="transaction_user_cat_date_idx",
             ),
+            # V1.2/V1.5 family reads filter by historical family + date range.
+            models.Index(fields=["family", "transaction_date"], name="transaction_family_date_idx"),
         ]
 
     def __str__(self) -> str:

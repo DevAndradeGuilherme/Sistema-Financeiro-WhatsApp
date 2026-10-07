@@ -127,6 +127,35 @@ No código, o dono é o campo `user`. `source ∈ {TEXT, AUDIO, IMAGE, MANUAL, A
 - Períodos de consulta: intervalo fechado `[start_date, end_date]` sobre `transaction_date`.
   "esse mês" = dia 1 até hoje; "mês passado" = mês civil anterior completo.
 
+### Análises (V1.5)
+
+Calculadas sob demanda em `transactions/analytics.py`, sobre o `ReadScope` autorizado (§6) —
+mesmas regras de SELF/FAMILY/FAMILY_MEMBER da V1.2. Ignoram soft-deleted, usam os valores
+atuais (após edição) e tratam TEXT/AUDIO/IMAGE igualmente. Nada é persistido. Respostas são
+fatos neutros, sem aconselhamento financeiro.
+
+- **Resumo do período (`PERIOD_SUMMARY`)**: receitas, despesas, saldo (pode ser negativo),
+  quantidade de receitas/despesas, gasto médio (despesas ÷ quantidade), maior gasto, maior
+  receita e as 3 principais categorias de gasto. Percentuais: despesas/receitas e economia
+  (`(receitas − despesas) ÷ receitas`); acima de 100% ou negativos são mostrados como são;
+  **com receitas = 0 nenhum percentual é mostrado**.
+- **Evolução mensal (`MONTHLY_TREND`)**: meses civis, janela de 1 a 12 meses terminando no mês
+  corrente (incluído, até hoje); padrão 6; pedido acima de 12 é limitado a 12 e a resposta diz
+  isso; valor nulo/zero/negativo → padrão. Métricas `EXPENSE`, `INCOME`, `BALANCE`. Meses sem
+  movimentação contam como zero (inclusive na média mensal).
+- **Variação por categoria (`CATEGORY_TREND`)**: total por categoria no período A × período B,
+  em uma única query. `INCREASE` = categorias que aumentaram (maior aumento primeiro);
+  `DECREASE` = que diminuíram (maior queda primeiro); `ALL` = qualquer variação (maior variação
+  absoluta primeiro). Período anterior = 0 → sem percentual ("sem movimento no período anterior").
+- Percentuais: `common.money.percent` — `Decimal`, 1 casa, `ROUND_HALF_UP`, `None` quando o
+  denominador é zero (também usado pelo `COMPARE`).
+
+**Comportamento conhecido / limitação (`CATEGORY_TREND`)**: sem períodos explícitos, segue a
+mesma semântica do `COMPARE`: **mês corrente até hoje × mês anterior completo**. No início do
+mês o período atual é parcial, então a comparação favorece o mês anterior (tende a mostrar
+reduções). Mantido por consistência com o `COMPARE`; mudar para comparação proporcional
+(ex.: 1–7 × 1–7) exige decisão de produto e entrada no registro de decisões.
+
 ## 5. Ciclo de vida da transação
 
 | Operação | Versão | Regra |

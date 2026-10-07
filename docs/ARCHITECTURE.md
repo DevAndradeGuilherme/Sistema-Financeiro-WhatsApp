@@ -32,7 +32,7 @@ apps/
   accounts/             User customizado (AbstractUser) + telefone E.164
   families/             Family, FamilyMember, policies de visibilidade
   categories/           Category, Subcategory, aliases; catálogo para a IA
-  transactions/         Transaction; services (escrita) e selectors (leitura/agregação)
+  transactions/         Transaction; services (escrita) e selectors (leitura/agregação), analytics (V1.5)
   ai/                   cliente OpenAI, schemas de saída, prompts
   whatsapp/             webhook, InboundMessage, cliente Evolution, orquestração
 common/                 helpers puros: money, dates, phone, logging/redaction
@@ -128,6 +128,12 @@ a etapa que produz o texto/proposta.
      silencioso para dados de outro usuário.
 4. Selector monta queryset já restrito ao escopo autorizado, exclui soft-deleted e agrega no banco.
 
+Análises (V1.5): `PERIOD_SUMMARY`, `MONTHLY_TREND` e `CATEGORY_TREND` seguem o mesmo fluxo.
+`apps/transactions/analytics.py` recebe o mesmo `ReadScope` autorizado (nenhum caminho novo de
+autorização), agrega no PostgreSQL (`Sum`/`Count` condicionais, `TruncMonth`) e devolve DTOs
+imutáveis em `Decimal`; nada é persistido. A resposta é montada localmente em
+`whatsapp/messages.py` (fatos, sem aconselhamento) — a IA nunca calcula nem redige valores.
+
 ## 6. Tempo e dinheiro
 
 - `USE_TZ = True`; `TIME_ZONE = "America/Sao_Paulo"` (configurável por env).
@@ -196,3 +202,6 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-07 — Pillow (dependência nova) só para validar/normalizar e remover metadados; sem OCR local.
 - 2026-10-07 — Cliente Storage próprio com stdlib (4 chamadas REST) em vez do SDK Supabase completo; bucket privado, service role só no backend.
 - 2026-10-07 — Comprovante: registro direto quando inequívoco (sem confirmação), com "desfazer" disponível; incerteza → pede dado em texto.
+- 2026-10-07 — Análises V1.5 em `transactions/analytics.py` sobre `ReadScope` (sem selector/autorização novos), calculadas sob demanda e nunca persistidas — sem tabelas de relatório nem snapshots.
+- 2026-10-07 — `CATEGORY_TREND` reutiliza a semântica de períodos do `COMPARE` (mês corrente até hoje × mês anterior completo) — consistência entre consultas; limitação conhecida documentada em `DOMAIN.md`.
+- 2026-10-07 — Índice `(family, transaction_date)` em `Transaction` (migration `transactions/0003`) — leituras familiares/análises filtram pela família histórica + período.

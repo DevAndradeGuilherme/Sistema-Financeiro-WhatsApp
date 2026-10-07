@@ -86,8 +86,11 @@ Nomes de campo indicativos; o agent pode ajustar nomenclatura mantendo semântic
 | `created_at`, `updated_at` | timestamptz | |
 | `deleted_at` | timestamptz, null | soft delete |
 
-Índices: `(user, transaction_date)` e `(user, category, transaction_date)`, considerando
-índice parcial `WHERE deleted_at IS NULL` quando o volume justificar.
+Índices: `(user, transaction_date)`, `(user, category, transaction_date)` e, desde a V1.5,
+`transaction_family_date_idx` `(family, transaction_date)` (migration `transactions/0003`,
+somente `CREATE INDEX`; aplicada no Supabase DEV em 2026-10-07, RLS inalterado em 19/19
+tabelas, nenhuma policy criada/alterada). Considerar índice parcial `WHERE deleted_at IS NULL`
+quando o volume justificar.
 
 Querysets: o manager padrão não deve esconder registros excluídos de forma implícita no
 Admin; selectors de domínio **sempre** filtram `deleted_at IS NULL` explicitamente ou via
@@ -95,6 +98,9 @@ queryset method nomeado (`.active()`).
 
 > V1.2 não criou tabelas nem colunas: consultas familiares usam `Transaction.family` (já
 > indexável via FK) e `FamilyMember`. Nenhuma alteração de RLS.
+>
+> V1.5 (análises) não criou tabelas, colunas nem snapshots de relatório: tudo é agregado sob
+> demanda (`Sum`/`Count` condicionais, `TruncMonth` sobre `transaction_date`) — só o índice acima.
 
 ### `transactions.TransactionChange` (V1.1)
 

@@ -8,7 +8,7 @@ transactions. Soft-deleted transactions are always excluded.
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db.models import DecimalField, Q, QuerySet, Sum, Value
@@ -16,6 +16,7 @@ from django.db.models.functions import Coalesce
 
 from apps.accounts.models import User
 from apps.categories.models import Category, Subcategory
+from common.money import percent
 
 from .models import Transaction, TransactionType
 from .scopes import FAMILY, ReadScope, own
@@ -181,14 +182,16 @@ def get_top_expenses(
     start_date: date,
     end_date: date,
     limit: int = 5,
+    type: str = TransactionType.EXPENSE,
 ) -> QuerySet[Transaction]:
-    """Largest expenses in the inclusive period."""
+    """Largest expenses (or incomes, with ``type=INCOME``) in the inclusive period."""
     _validate_period(start_date, end_date)
+    _validate_type(type)
     if not 1 <= limit <= MAX_TOP_LIMIT:
         raise ValidationError(f"limit deve estar entre 1 e {MAX_TOP_LIMIT}.")
     return (
         _period_queryset(user, scope, start_date, end_date)
-        .filter(type=TransactionType.EXPENSE)
+        .filter(type=type)
         .select_related("category", "subcategory", "user")
         .order_by("-amount", "-transaction_date", "-created_at")[:limit]
     )
@@ -206,11 +209,7 @@ class PeriodComparison:
     @property
     def percent(self) -> Decimal | None:
         """(A - B) / B * 100, one decimal place, ROUND_HALF_UP. None when B is zero."""
-        if self.previous == 0:
-            return None
-        return (self.difference / self.previous * 100).quantize(
-            Decimal("0.1"), rounding=ROUND_HALF_UP
-        )
+        return percent(self.difference, self.previous)
 
 
 def compare_periods(

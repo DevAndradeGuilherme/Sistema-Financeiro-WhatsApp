@@ -193,13 +193,22 @@ def top_expenses(
     end: date,
     today: date,
     who: str | None = None,
+    is_income: bool = False,
 ) -> str:
     period = describe_period(start, end, today)
+    noun = "entradas" if is_income else "gastos"
     if not rows:
-        return f"Não encontrei gastos{_of(who)} {period}."
+        return f"Não encontrei {noun}{_of(who)} {period}."
+    if len(rows) == 1:
+        label, value = rows[0]
+        title = "Maior entrada" if is_income else "Maior gasto"
+        return f"{title}{_of(who)} {period}: {label} — {format_brl(value)}."
     if who is None:
-        return ranked(f"Seus maiores gastos {period}:", rows)
-    return ranked(f"Maiores gastos{_of(who)} {period}:", rows)
+        return ranked(
+            f"Suas maiores {noun} {period}:" if is_income else f"Seus maiores gastos {period}:",
+            rows,
+        )
+    return ranked(f"Maiores {noun}{_of(who)} {period}:", rows)
 
 
 def breakdown(
@@ -281,3 +290,97 @@ def comparison(
         return text + f" ({nothing} no período anterior)."
     sign = "+" if percent > 0 else ""
     return text + f" ({sign}{str(percent).replace('.', ',')}%)."
+
+
+# --- V1.5 analytics (facts only, no advice) ------------------------------------------------------
+
+NO_DATA = "Não há movimentações suficientes nesse período para montar o resumo."
+_MONTH_ABBR = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+
+
+def _pct(value: Decimal, *, signed: bool = False) -> str:
+    sign = "+" if signed and value > 0 else ""
+    return f"{sign}{str(value).replace('.', ',')}%"
+
+
+def _signed_brl(value: Decimal) -> str:
+    return f"+{format_brl(value)}" if value > 0 else format_brl(value)
+
+
+def period_summary(summary, *, start: date, end: date, today: date, who: str | None = None) -> str:
+    if not summary.has_data:
+        return NO_DATA
+    period = describe_period(start, end, today)
+    title = f"Resumo {period}:" if who is None else f"Resumo{_of(who)} {period}:"
+    lines = [
+        title,
+        f"Receitas: {format_brl(summary.income_total)} ({summary.income_count})",
+        f"Despesas: {format_brl(summary.expense_total)} ({summary.expense_count})",
+        f"Saldo: {format_brl(summary.balance)}",
+    ]
+    if summary.expense_ratio is not None:
+        lines.append(f"Despesas/receitas: {_pct(summary.expense_ratio)}")
+        lines.append(f"Economia: {_pct(summary.savings_rate)}")
+    if summary.average_expense is not None:
+        lines.append(f"Gasto médio: {format_brl(summary.average_expense)}")
+    if summary.largest_expense:
+        e = summary.largest_expense
+        lines.append(f"Maior gasto: {e.label} — {format_brl(e.amount)}")
+    if summary.largest_income:
+        i = summary.largest_income
+        lines.append(f"Maior receita: {i.label} — {format_brl(i.amount)}")
+    if summary.top_categories:
+        top = "; ".join(f"{c.category_name} {format_brl(c.total)}" for c in summary.top_categories)
+        lines.append(f"Principais categorias: {top}")
+    return NEWLINE.join(lines)
+
+
+def monthly_trend(trend, *, capped: bool = False, who: str | None = None) -> str:
+    if not trend.has_data:
+        return NO_DATA
+    noun = {"EXPENSE": "Gastos", "INCOME": "Receitas"}.get(trend.metric, "Saldo")
+    years = {p.month.year for p in trend.points}
+    limit = "; máximo permitido" if capped else ""
+    lines = [f"{noun}{_of(who)} por mês (últimos {len(trend.points)} meses{limit}):"]
+    for p in trend.points:
+        label = _MONTH_ABBR[p.month.month - 1]
+        if len(years) > 1:
+            label += f"/{p.month.year}"
+        lines.append(f"{label} — {format_brl(p.value(trend.metric))}")
+    lines.append(f"Média mensal: {format_brl(trend.average)}")
+    return NEWLINE.join(lines)
+
+
+def category_trend(
+    changes,
+    *,
+    direction: str,
+    is_income: bool,
+    period_a: tuple[date, date],
+    period_b: tuple[date, date],
+    today: date,
+    who: str | None = None,
+) -> str:
+    noun = "receitas" if is_income else "gastos"
+    a = describe_period(*period_a, today)
+    b = describe_period(*period_b, today)
+    if not changes:
+        if direction in ("INCREASE", "DECREASE"):
+            verb = "aumentou" if direction == "INCREASE" else "diminuiu"
+            previous = b.removeprefix("em ")
+            return f"Nenhuma categoria de {noun}{_of(who)} {verb} {a} em relação a {previous}."
+        return NO_DATA
+    kind = {"INCREASE": "Maiores aumentos", "DECREASE": "Maiores reduções"}.get(
+        direction, "Variações"
+    )
+    title = f"{kind} de {noun}{_of(who)} ({a} x {b}):"
+    lines = [title]
+    for index, c in enumerate(changes, 1):
+        if c.previous == 0:
+            detail = f"{format_brl(c.current)}; sem movimento no período anterior"
+        elif c.change == 0:
+            detail = f"{format_brl(c.current)} (igual)"
+        else:
+            detail = f"{_signed_brl(c.change)} ({_pct(c.percent, signed=True)})"
+        lines.append(f"{index}. {c.category_name}: {detail}")
+    return NEWLINE.join(lines)

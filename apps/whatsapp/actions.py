@@ -35,7 +35,7 @@ from apps.ai.contract import (
 from apps.categories.models import Category, Subcategory
 from apps.categories.selectors import get_fallback_category, list_active_categories
 from apps.families.selectors import member_display_name
-from apps.transactions import scopes, selectors
+from apps.transactions import analytics, scopes, selectors
 from apps.transactions.models import (
     Transaction,
     TransactionChange,
@@ -108,7 +108,7 @@ class CreatePlan:
 @dataclass(frozen=True)
 class QueryPlan:
     intent: str
-    kind: str  # TOTAL | BALANCE | TOP | BREAKDOWN | LIST | COMPARE | RANKING
+    kind: str  # TOTAL | BALANCE | TOP | BREAKDOWN | LIST | COMPARE | RANKING | V1.5 analytics
     type: str | None
     category: Category | None
     subcategory: Subcategory | None
@@ -120,6 +120,11 @@ class QueryPlan:
     # Untrusted hints about whose data; authorized at execution (apps.transactions.scopes).
     scope_kind: str = scopes.SELF
     member_name: str | None = None
+    # V1.5 analytics (validated)
+    months: int | None = None
+    metric: str | None = None  # MONTHLY_TREND: EXPENSE | INCOME | BALANCE
+    direction: str | None = None  # CATEGORY_TREND: INCREASE | DECREASE | ALL
+    months_capped: bool = False
 
     def as_context(self, scope: scopes.ReadScope) -> dict:
         """Validated parameters only (ids, dates, kinds, resolved names) for follow-ups.
@@ -138,6 +143,9 @@ class QueryPlan:
             "compare_start_date": self.compare_start.isoformat() if self.compare_start else None,
             "compare_end_date": self.compare_end.isoformat() if self.compare_end else None,
             "limit": self.limit,
+            "months": self.months,
+            "trend_metric": self.metric,
+            "trend_direction": self.direction,
         }
 
 
@@ -321,9 +329,16 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
     if kind == "BALANCE":
         transaction_type = None
     elif kind == "TOP":
-        transaction_type = TransactionType.EXPENSE  # "maiores gastos"
-    elif kind in ("BREAKDOWN", "COMPARE", "RANKING"):
+        # "maiores gastos" (default) or "maior entrada" (INCOME)
+        transaction_type = (
+            TransactionType.INCOME
+            if transaction_type == TransactionType.INCOME
+            else TransactionType.EXPENSE
+        )
+    elif kind in ("BREAKDOWN", "COMPARE", "RANKING", "CATEGORY_TREND"):
         transaction_type = transaction_type or TransactionType.EXPENSE
+    elif kind in ("PERIOD_SUMMARY", "MONTHLY_TREND"):
+        transaction_type = None
     elif kind not in ("TOTAL", "LIST"):
         return ReplyPlan(i.intent, messages.NOT_UNDERSTOOD, "NOT_UNDERSTOOD")
 
@@ -333,7 +348,7 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
     start, end = period
 
     compare_start = compare_end = None
-    if kind == "COMPARE":
+    if kind in ("COMPARE", "CATEGORY_TREND"):
         if i.compare_start_date is None and i.compare_end_date is None:
             compare_end = start.replace(day=1) - timedelta(days=1)  # previous full month
             compare_start = compare_end.replace(day=1)
@@ -350,9 +365,26 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
             return ReplyPlan(i.intent, messages.CATEGORY_NOT_FOUND, "CATEGORY_NOT_FOUND")
         category, subcategory = resolved
 
+    if kind == "CATEGORY_TREND":
+        resolved = _resolve_for_query(i.category_id, None, transaction_type)
+        if resolved is None:
+            return ReplyPlan(i.intent, messages.CATEGORY_NOT_FOUND, "CATEGORY_NOT_FOUND")
+        category = resolved[0]
+
     limit = None
-    if kind in ("TOP", "LIST"):
+    if kind in ("TOP", "LIST", "CATEGORY_TREND"):
         limit = DEFAULT_LIMIT if i.limit is None or i.limit < 1 else min(i.limit, MAX_LIMIT)
+
+    months = metric = direction = None
+    months_capped = False
+    if kind == "MONTHLY_TREND":
+        # Untrusted: null/zero/negative → default; above the maximum → capped (and said so).
+        months = i.months if isinstance(i.months, int) and i.months >= 1 else None
+        months_capped = months is not None and months > analytics.MAX_MONTHS
+        months = min(months or analytics.DEFAULT_TREND_MONTHS, analytics.MAX_MONTHS)
+        metric = i.trend_metric or i.transaction_type or TransactionType.EXPENSE
+    if kind == "CATEGORY_TREND":
+        direction = i.trend_direction or analytics.ALL
 
     scope_kind = i.scope if i.scope in (scopes.FAMILY, scopes.FAMILY_MEMBER) else scopes.SELF
     if scope_kind == scopes.SELF and i.target_member_name:
@@ -373,6 +405,10 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
         limit,
         scope_kind=scope_kind,
         member_name=i.target_member_name if scope_kind == scopes.FAMILY_MEMBER else None,
+        months=months,
+        metric=metric,
+        direction=direction,
+        months_capped=months_capped,
     )
 
 
@@ -641,7 +677,37 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
     )
     context = p.as_context(scope)
 
-    if p.kind == "RANKING":
+    if p.kind == "PERIOD_SUMMARY":
+        summary = analytics.period_summary(scope=scope, start_date=p.start, end_date=p.end)
+        reply = messages.period_summary(summary, start=p.start, end=p.end, today=today, who=who)
+    elif p.kind == "MONTHLY_TREND":
+        end_month = min(p.end or today, today)
+        trend = analytics.monthly_trend(
+            scope=scope, months=p.months, end_month=end_month, metric=p.metric
+        )
+        reply = messages.monthly_trend(trend, capped=p.months_capped, who=who)
+    elif p.kind == "CATEGORY_TREND":
+        changes = analytics.category_trend(
+            scope=scope,
+            type=p.type,
+            start_date=p.start,
+            end_date=p.end,
+            compare_start_date=p.compare_start,
+            compare_end_date=p.compare_end,
+            direction=p.direction,
+            category_id=p.category.pk if p.category else None,
+            limit=p.limit,
+        )
+        reply = messages.category_trend(
+            changes,
+            direction=p.direction,
+            is_income=is_income,
+            period_a=(p.start, p.end),
+            period_b=(p.compare_start, p.compare_end),
+            today=today,
+            who=who,
+        )
+    elif p.kind == "RANKING":
         rows = selectors.get_member_totals(
             scope=scope, start_date=p.start, end_date=p.end, type=p.type
         )
@@ -664,7 +730,7 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
         )
     elif p.kind == "TOP":
         rows = selectors.get_top_expenses(
-            scope=scope, start_date=p.start, end_date=p.end, limit=p.limit
+            scope=scope, start_date=p.start, end_date=p.end, limit=p.limit, type=p.type
         )
         reply = messages.top_expenses(
             [(_item_label(t, with_member=is_family), t.amount) for t in rows],
@@ -672,6 +738,7 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
             end=p.end,
             today=today,
             who=who,
+            is_income=is_income,
         )
     elif p.kind == "BREAKDOWN":
         rows = selectors.get_totals_by_category(
