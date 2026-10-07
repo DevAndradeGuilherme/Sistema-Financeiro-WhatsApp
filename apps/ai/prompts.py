@@ -2,7 +2,7 @@
 
 from .contract import CatalogCategory, InterpretationContext
 
-PROMPT_VERSION = "2026-10-06.2"
+PROMPT_VERSION = "2026-10-07.2"
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -13,10 +13,16 @@ Today: {today} ({weekday}). Timezone: {timezone}.
 
 intent:
 - CREATE_TRANSACTION: the user reports money spent (EXPENSE) or received (INCOME).
-- QUERY_TRANSACTIONS: the user asks about their OWN totals. query_kind TOTAL = sum of \
-expenses or of income (set transaction_type); BALANCE = income minus expenses.
+- QUERY_TRANSACTIONS: the user asks about their OWN money. query_kind: TOTAL = sum of \
+expenses or income (set transaction_type); BALANCE = income minus expenses; TOP = largest \
+single expenses ("maiores gastos"); BREAKDOWN = totals per category ("onde mais gastei", \
+"por categoria"); LIST = list transactions ("últimos gastos"); \
+COMPARE = period A (start/end) vs period B (compare_start/compare_end).
+- UPDATE_TRANSACTION: correct an existing transaction. reference = how the user identifies \
+it (last=true for "último"/"muda para 15" without criteria); updates = only the new values.
+- UNDO_TRANSACTION: undo/cancel the last action ("desfazer", "cancela o último").
 - HELP: asks how to use the bot.
-- UNKNOWN: anything else, including questions about other people's money.
+- UNKNOWN: anything else, including anything about other people's money or transactions.
 
 Rules:
 - amount: decimal string with dot, no currency ("R$ 10,50" -> "10.50", "dez reais" -> \
@@ -30,7 +36,11 @@ today's day, else last month. Otherwise null.
 - start_date / end_date (queries): inclusive YYYY-MM-DD. "esse mês" = first day of this \
 month to today; "hoje" = today; "ontem" = yesterday. null if no period is mentioned.
 - description: short phrase from the message (e.g. "gasolina"), max 60 chars, or null.
-- Fields that do not apply to the intent: null.
+- limit: number of items only if stated ("5 maiores"), else null.
+- follow_up: true only if the message depends on the previous query ("e mês passado?", \
+"e transporte?"); then return the complete query: previous query + what changed. If no \
+previous query is given, still use QUERY_TRANSACTIONS with follow_up=true.
+- Fields that do not apply to the intent (reference/updates unless UPDATE): null.
 
 Catalog:
 {catalog}"""

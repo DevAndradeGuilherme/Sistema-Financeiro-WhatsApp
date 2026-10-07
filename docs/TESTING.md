@@ -85,6 +85,10 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
 - `apps/whatsapp/tests/test_pipeline.py`: `interpret_message` mockado com a proposta esperada
   para cada frase pt-BR; valida criação, fallback, datas, consultas, isolamento, idempotência,
   falha de envio sem recriação e rollback atômico.
+- V1.1: `apps/transactions/tests/test_changes.py` (update/undo/auditoria/concorrência por threads,
+  comparação, busca de referência) e `apps/whatsapp/tests/test_pipeline_v11.py` (edição,
+  desfazer, follow-ups, TTL, isolamento, top/breakdown/lista/comparação, atomicidade).
+  Fixtures do pipeline em `apps/whatsapp/tests/conftest.py`.
 - Smoke test real (manual, fora da suíte): chamar `apps.ai.service.interpret_message` com o
   contexto real, sem persistir, e conferir intenção/valor/categoria/datas e tokens.
 

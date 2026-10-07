@@ -106,3 +106,29 @@ class InboundMessage(models.Model):
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.instance}:{self.provider_message_id} ({self.status})"
+
+
+class ConversationContext(models.Model):
+    """Minimal per-user conversation state: the last *validated* query parameters.
+
+    Used only to resolve follow-ups ("e mês passado?"). Holds ids/dates/kinds, never amounts,
+    texts or other users' data, and expires after CONVERSATION_CONTEXT_TTL_MINUTES. It never
+    grants access: queries always run for the message sender.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="conversation_context",
+        verbose_name="usuário",
+    )
+    last_query = models.JSONField("última consulta")
+    expires_at = models.DateTimeField("expira em")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "contexto de conversa"
+        verbose_name_plural = "contextos de conversa"
+
+    def __str__(self) -> str:
+        return f"Contexto de {self.user_id} até {self.expires_at:%H:%M}"

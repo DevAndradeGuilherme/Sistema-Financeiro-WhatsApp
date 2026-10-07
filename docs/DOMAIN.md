@@ -126,15 +126,40 @@ No código, o dono é o campo `user`. `source ∈ {TEXT, AUDIO, IMAGE, MANUAL, A
 
 | Operação | Versão | Regra |
 |---|---|---|
-| Criar | V1.0 | Ator vira `owner`. Idempotente por `idempotency_key`. |
-| Consultar | V1.0 (próprias), V1.2 (família) | Sempre via selector com escopo autorizado. |
-| Editar | V1.1 | Só o `owner`. Revalida todas as regras da seção 3. Não altera `owner`. |
-| Desfazer | V1.1 | Só o `owner`. Aplica soft delete (`deleted_at`). |
-| Soft delete | V1.1 | `deleted_at` preenchido; registro some de consultas e totais. Sem exclusão física pelo canal. |
+| Criar | V1.0 | Ator vira dono (`user`). Idempotente por `idempotency_key`. Gera `TransactionChange(CREATE)`. |
+| Consultar | V1.0/V1.1 (próprias), V1.2 (família) | Sempre via selector com o remetente como `user`. |
+| Editar | V1.1 ✅ | `update_transaction`: só o dono, só transação ativa. Campos: valor, descrição, categoria, subcategoria, data. **Nunca**: dono, família, tipo, origem, ids. Revalida as regras da seção 3. Gera `UPDATE` com antes/depois. |
+| Desfazer | V1.1 ✅ | `undo_last_change`: ver abaixo. Gera `UNDO`. |
+| Soft delete | V1.0 | `deleted_at`; some de consultas e totais. Gera `DELETE`. Sem exclusão física pelo canal. |
 
-Alvo de edição/desfazer no V1.1: por padrão a **última transação ativa do próprio ator**;
-referências mais específicas exigem contexto conversacional mínimo (V1.1).
-Restaurar transação desfeita não está no escopo atual.
+### Seleção do lançamento a editar (V1.1)
+
+A IA descreve a referência (`último`, tipo, categoria, subcategoria, descrição, valor, data);
+o Django busca **somente nas transações ativas do remetente**, com `transaction_date` nos
+últimos 90 dias (`find_transactions`):
+
+- "último" ou referência sem critérios → a transação registrada mais recentemente (do tipo,
+  se informado);
+- com critérios → 0 resultados: "não encontrei"; 2 ou mais: pede valor/data e **não altera
+  nada**; exatamente 1: altera. Categoria/subcategoria na referência dispensam a descrição
+  livre (o item já está identificado pelo catálogo).
+
+### Política de desfazer (V1.1)
+
+- "desfazer" desfaz a **última ação reversível ainda não desfeita do próprio usuário**:
+  `CREATE` (→ soft delete) ou `UPDATE` (→ restaura os valores anteriores exatos).
+- É uma pilha: criar 10 → mudar para 15 → desfazer (volta a 10) → desfazer (remove o registro)
+  → desfazer ("nada para desfazer").
+- `UNDO` e `DELETE` não são reversíveis; não há redo. Cada ação só pode ser desfeita uma vez
+  (unicidade no banco). Ações de transações já excluídas são puladas.
+- Transações criadas antes da V1.1 não têm registro de criação e não são desfeitas.
+- Não há janela de tempo: a resposta sempre informa exatamente o que foi desfeito.
+
+### Auditoria
+
+`TransactionChange`: quem (`user`), qual transação, ação, `before`/`after` (somente campos
+financeiros; dinheiro como string), quando, e `origin` (ex.: `whatsapp:<instância>:<id da
+mensagem>`, que identifica a `InboundMessage`). Somente leitura no Admin.
 
 ## 6. Autorização
 
@@ -154,6 +179,7 @@ Funções de referência:
   (ambos na mesma família e `actor` é ADMIN dela).
 - `can_view_family(actor, family) -> bool`: `actor` é ADMIN da família.
 - `can_modify_transaction(actor, transaction) -> bool`: `transaction.user == actor` (dono).
+  Usada por `update_transaction`, `undo_last_change` e `soft_delete_transaction`.
 
 Negação de acesso gera resposta neutra ("Você não tem permissão para consultar esses dados"),
 sem revelar se o alvo existe.

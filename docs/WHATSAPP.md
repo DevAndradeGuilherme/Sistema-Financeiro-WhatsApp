@@ -13,6 +13,7 @@ Tabela `InboundMessage`: [`DATABASE.md`](DATABASE.md).
 | `pipeline.py` | `handle_ready_message(record)`: IA → validação → efeito atômico → resposta |
 | `actions.py` | Contexto da IA, validação da proposta (`plan`) e execução (`execute`) no domínio |
 | `messages.py` | Todos os textos enviados ao usuário (locais, nunca gerados pela IA) |
+| `context.py` | Contexto curto por usuário (`ConversationContext`, TTL) para follow-ups |
 | `views.py` | Webhook fino: autentica → parseia → service → status HTTP |
 | `client.py` | HTTP para a Evolution (stdlib `urllib`), timeout, erros tipados |
 | `admin.py` | `InboundMessage` somente leitura (diagnóstico, não é fila) |
@@ -126,7 +127,8 @@ Pipeline (`pipeline.handle_ready_message`), sem transação aberta durante HTTP:
 2. Contexto + **uma** chamada OpenAI. Falha → `FAILED` (`AI_<código>`), resposta genérica.
 3. `actions.plan`: validação Django da proposta (leitura apenas).
 4. `transaction.atomic()`: `select_for_update` da mensagem; se não estiver mais `READY`, para;
-   executa (`create_transaction` / selectors) e grava `PROCESSED` + `intent` + `transaction`.
+   executa (`create_transaction` / `update_transaction` / `undo_last_change` / selectors),
+   grava o contexto da consulta e `PROCESSED` + `intent` + `transaction` (afetada).
    Efeito e status commitam juntos; qualquer exceção desfaz ambos → `FAILED` (`PIPELINE_ERROR`).
 5. Resposta enviada **depois** do commit. Falha no envio → continua `PROCESSED`, `error_code =
    REPLY_SEND_FAILED`; nada é reexecutado (reentrega = duplicata; status ≠ READY).
@@ -153,7 +155,12 @@ Retenção de `InboundMessage` deve ser definida antes da produção.
   é registrada e não desfaz a transação.
 - Textos: `apps/whatsapp/messages.py`. Exemplos: "✅ Gasto registrado: R$ 10,00 em Transporte ·
   Combustível.", "✅ Entrada registrada: R$ 25,00 em Outras receitas.", "Você gastou R$ 10,00 com
-  Transporte em outubro.", "Seu saldo em outubro é R$ 15,00 (entradas R$ 25,00; gastos R$ 10,00)."
+  Transporte em outubro.", "Seu saldo em outubro é R$ 15,00 (entradas R$ 25,00; gastos R$ 10,00).",
+  "✏️ Gasto atualizado: R$ 10,00 → R$ 15,00 em Transporte · Combustível.", "↩️ Alteração
+  desfeita. O gasto voltou para R$ 10,00 em Transporte · Combustível.", "↩️ Registro de
+  R$ 10,00 em Transporte · Combustível desfeito.", listas numeradas (até 10 linhas) para
+  maiores gastos/por categoria/últimos lançamentos e "Você gastou R$ 850,00 em outubro e
+  R$ 700,00 em setembro: R$ 150,00 a mais (+21,4%)."
 
 Comandos (nunca imprimem API key nem segredo):
 

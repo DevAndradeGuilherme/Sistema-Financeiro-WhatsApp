@@ -65,7 +65,7 @@ def interpret_message(
     request = {
         "model": config.model,
         "instructions": build_instructions(context),
-        "input": text,
+        "input": _input(text, context),
         "store": False,
         "max_output_tokens": MAX_OUTPUT_TOKENS,
         "text": {
@@ -101,6 +101,17 @@ def interpret_message(
     )
     _log(log_ref, config.model, started, outcome="OK", intent=interpretation.intent, usage=usage)
     return result
+
+
+def _input(text: str, context: InterpretationContext):
+    """Plain text, or [previous query (developer), message (user)] for follow-ups."""
+    if not context.previous_query:
+        return text
+    previous = json.dumps(context.previous_query, separators=(",", ":"), ensure_ascii=False)
+    return [
+        {"role": "developer", "content": f"Previous query: {previous}"},
+        {"role": "user", "content": text},
+    ]
 
 
 def _extract(response) -> Interpretation:

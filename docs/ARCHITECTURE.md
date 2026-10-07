@@ -90,7 +90,9 @@ Evolution ──POST──> /webhooks/evolution/<...>   (whatsapp)
   7. whatsapp.actions.plan: validação Django (Decimal, datas ISO, ids do catálogo, fallback).
   8. atomic[ lock da InboundMessage (READY?) → efeito → status PROCESSED ]:
        CREATE_TRANSACTION  → transactions.services.create_transaction(user=remetente, ...)
-       QUERY_TRANSACTIONS  → transactions.selectors.get_total / get_period_totals (SQL)
+       UPDATE_TRANSACTION  → selectors.find_transactions (só do remetente) → services.update_transaction
+       UNDO_TRANSACTION    → services.undo_last_change(user=remetente)
+       QUERY_TRANSACTIONS  → transactions.selectors.* (SQL) + ConversationContext.remember
        HELP / UNKNOWN      → resposta fixa
   9. Resposta montada localmente (whatsapp.messages + common.formatting).
  10. Envia via cliente Evolution, fora da transação; falha não reexecuta o efeito.
@@ -175,3 +177,7 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-06 — Consultas V1.0 sempre do próprio remetente; contrato sem `scope`/`target_user` — consultas familiares ficam para a V1.2.
 - 2026-10-06 — `OPENAI_REASONING_EFFORT` opcional (dev: `none` com `gpt-6-luna`) — mesma qualidade nos casos testados, sem tokens de raciocínio.
 - 2026-10-06 — Eco técnico `WHATSAPP_DEV_ECHO` removido — substituído pelo pipeline real.
+- 2026-10-07 — Auditoria e desfazer via `TransactionChange` (before/after só com campos financeiros, `reverts` one-to-one) — mínimo auditável, sem event sourcing.
+- 2026-10-07 — Mutações por usuário serializadas com `SELECT ... FOR NO KEY UPDATE` na linha do usuário — evita corrida update × undo sem bloquear inserts com FK.
+- 2026-10-07 — Contexto conversacional em `whatsapp.ConversationContext` (PostgreSQL, TTL 20 min, só a última consulta validada) — sem Redis, sem memória aberta.
+- 2026-10-07 — Contrato v1.1 plano + objetos `reference`/`updates`; consultas avançadas como `query_kind` — menos campos que intenções separadas.

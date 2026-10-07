@@ -37,3 +37,18 @@ def test_admin_index_and_changelists_render(admin_client):
         "/admin/categories/category/add/",
     ):
         assert admin_client.get(url).status_code == 200, url
+
+
+def test_transaction_change_admin_is_read_only(admin_client, alice, food, make_transaction):
+    from apps.transactions.models import TransactionChange
+
+    make_transaction(user=alice, category=food)
+    change = TransactionChange.objects.get()
+    base = "/admin/transactions/transactionchange/"
+    assert admin_client.get(base).status_code == 200
+    assert admin_client.get(f"{base}{change.pk}/change/").status_code == 200
+    assert admin_client.get(f"{base}add/").status_code == 403
+    assert admin_client.post(f"{base}{change.pk}/change/", {"action": "UNDO"}).status_code == 403
+    assert admin_client.post(f"{base}{change.pk}/delete/", {"post": "yes"}).status_code == 403
+    change.refresh_from_db()
+    assert change.action == TransactionChange.Action.CREATE

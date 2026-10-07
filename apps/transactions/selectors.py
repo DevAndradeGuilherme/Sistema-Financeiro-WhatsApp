@@ -7,7 +7,7 @@ Soft-deleted transactions are always excluded.
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.core.exceptions import ValidationError
 from django.db.models import DecimalField, Q, QuerySet, Sum, Value
@@ -135,6 +135,80 @@ def get_top_expenses(
         .select_related("category", "subcategory")
         .order_by("-amount", "-transaction_date", "-created_at")[:limit]
     )
+
+
+@dataclass(frozen=True)
+class PeriodComparison:
+    current: Decimal  # period A
+    previous: Decimal  # period B
+
+    @property
+    def difference(self) -> Decimal:
+        return self.current - self.previous
+
+    @property
+    def percent(self) -> Decimal | None:
+        """(A - B) / B * 100, one decimal place, ROUND_HALF_UP. None when B is zero."""
+        if self.previous == 0:
+            return None
+        return (self.difference / self.previous * 100).quantize(
+            Decimal("0.1"), rounding=ROUND_HALF_UP
+        )
+
+
+def compare_periods(
+    *,
+    user: User,
+    type: str,
+    start_date: date,
+    end_date: date,
+    compare_start_date: date,
+    compare_end_date: date,
+    category: Category | None = None,
+    subcategory: Subcategory | None = None,
+) -> PeriodComparison:
+    """Totals of two inclusive periods (A = start/end, B = compare_*), computed in SQL."""
+    common = {"user": user, "type": type, "category": category, "subcategory": subcategory}
+    return PeriodComparison(
+        current=get_total(start_date=start_date, end_date=end_date, **common),
+        previous=get_total(start_date=compare_start_date, end_date=compare_end_date, **common),
+    )
+
+
+def find_transactions(
+    *,
+    user: User,
+    since: date,
+    type: str | None = None,
+    category: Category | None = None,
+    subcategory: Subcategory | None = None,
+    description: str | None = None,
+    amount: Decimal | None = None,
+    transaction_date: date | None = None,
+    limit: int = 2,
+) -> list[Transaction]:
+    """Candidates for a reference like "o gasto de 50 no mercado", newest registered first.
+
+    Only the user's active transactions with ``transaction_date >= since``. Callers use
+    ``limit=2`` to detect ambiguity without loading history.
+    """
+    if not 1 <= limit <= MAX_TOP_LIMIT:
+        raise ValidationError(f"limit deve estar entre 1 e {MAX_TOP_LIMIT}.")
+    qs = _base_queryset(user).filter(transaction_date__gte=since)
+    if type is not None:
+        _validate_type(type)
+        qs = qs.filter(type=type)
+    if category is not None:
+        qs = qs.filter(category=category)
+    if subcategory is not None:
+        qs = qs.filter(subcategory=subcategory)
+    if description:
+        qs = qs.filter(description__icontains=description.strip())
+    if amount is not None:
+        qs = qs.filter(amount=amount)
+    if transaction_date is not None:
+        qs = qs.filter(transaction_date=transaction_date)
+    return list(qs.select_related("category", "subcategory").order_by("-created_at", "-id")[:limit])
 
 
 def _base_queryset(user: User) -> QuerySet[Transaction]:

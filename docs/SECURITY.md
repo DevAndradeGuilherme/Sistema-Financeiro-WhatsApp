@@ -38,6 +38,10 @@ Revisores (Codex) devem usar este documento como checklist.
   contrato sem campos de usuário/escopo; o usuário consultado é sempre o remetente
   (`InboundMessage.user`); ids de categoria revalidados; totais só por selectors (SQL).
   Testes cobrem "quanto a Maria gastou?" e payload com ids manipulados.
+- V1.1: a IA não envia id de transação (o schema estrito o rejeita); a transação a editar é
+  buscada só entre as do remetente; editar/desfazer exigem ser o dono (`can_modify_transaction`);
+  o contexto de follow-up é por usuário, expira e só contém parâmetros validados. Testes:
+  "edita o gasto da Maria", "desfaz o gasto do João", contexto de outro usuário.
 - `OPENAI_API_KEY` nunca é logada nem persistida; logs da IA só têm métricas (modelo, intenção,
   duração, tokens).
 
@@ -91,6 +95,7 @@ chamadas à Evolution sempre com timeout.
 - [ ] Algum campo da IA ou do payload influencia autorização? (não pode)
 - [ ] Algum selector/serviço novo é acessível sem `actor`?
 - [ ] ADMIN consegue editar/desfazer transação de terceiro por algum caminho?
+- [ ] Alguma mutação sem registro em `TransactionChange` ou fora do `atomic` da mensagem?
 - [ ] Idempotência garantida por constraint, não só por `if exists`?
 - [ ] Algum `float` em dinheiro?
 - [ ] Algum segredo, telefone completo ou payload bruto em log?

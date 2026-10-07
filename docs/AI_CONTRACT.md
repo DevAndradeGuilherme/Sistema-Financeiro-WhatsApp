@@ -23,9 +23,21 @@ Django (`apps/whatsapp/messages.py`).
   `OPENAI_REASONING_EFFORT` (`none|low|medium|high`), enviado só quando definido, pois nem
   todo modelo aceita. Sem fallback silencioso para outro modelo.
 - `max_output_tokens = 1024` (o objeto usa ~60–110).
-- Validado ao vivo com `gpt-6-luna` + `OPENAI_REASONING_EFFORT=none`: ~860 tokens de entrada,
-  ~60–70 de saída, 0 de raciocínio, 1–3 s por mensagem. `low` não melhorou a qualidade nos
-  casos de teste e gastou 20–55 tokens de raciocínio a mais.
+- Validado ao vivo com `gpt-6-luna` + `OPENAI_REASONING_EFFORT=none`. Contrato v1.0: ~860 tokens
+  de entrada, ~60–70 de saída. Contrato v1.1: ~1.260 de entrada (+~400: regras de
+  edição/desfazer/novas consultas e schema maior com objetos aninhados), ~85–145 de saída
+  (objetos `reference`/`updates`), +~60 de entrada em follow-ups (consulta anterior).
+  0 tokens de raciocínio; 1,5–4 s por mensagem.
+
+### Contexto conversacional (V1.1)
+
+Para follow-ups, a última consulta **validada** do remetente (ids, datas, tipo, `limit` — sem
+valores, textos ou dados de terceiros) é enviada como mensagem `developer` separada
+(`Previous query: {...}`), antes da mensagem do usuário. As instruções não mudam (prefixo
+estável). Contexto vem de `ConversationContext` (por usuário, TTL
+`CONVERSATION_CONTEXT_TTL_MINUTES`, padrão 20 min) e nunca concede acesso: a consulta roda
+sempre para o remetente. Mutações não usam contexto da IA: "muda para 15" e "desfazer" são
+resolvidos no banco.
 - Interface (`apps/ai/service.py`), sem acesso a models de domínio:
 
 ```python
@@ -46,17 +58,19 @@ resultado possível é uma proposta inválida, rejeitada pela validação.
 | Intenção | Versão | Descrição |
 |---|---|---|
 | `CREATE_TRANSACTION` | V1.0 ✅ | Registrar despesa ou receita |
-| `QUERY_TRANSACTIONS` | V1.0 ✅ | `TOTAL` (gastos ou receitas, opcionalmente por categoria/subcategoria) ou `BALANCE` no período |
+| `QUERY_TRANSACTIONS` | V1.0/V1.1 ✅ | `query_kind`: `TOTAL`, `BALANCE`, `TOP` (maiores gastos), `BREAKDOWN` (por categoria), `LIST` (listagem curta), `COMPARE` (período A × B) |
+| `UPDATE_TRANSACTION` | V1.1 ✅ | Corrigir lançamento próprio: `reference` + `updates` |
+| `UNDO_TRANSACTION` | V1.1 ✅ | Desfazer a última ação (política em `DOMAIN.md §5`) |
 | `HELP` | V1.0 ✅ | Ajuda (resposta local fixa) |
-| `UNKNOWN` | V1.0 ✅ | Não identificado, fora do escopo ou sobre dados de outra pessoa |
-| `UPDATE_TRANSACTION`, `UNDO_TRANSACTION` | V1.1 | — |
-| `COMPARE_PERIODS`, `TOP_EXPENSES` | V1.1/V1.5 | — |
-| `CATEGORY_BREAKDOWN` | V1.5 | — |
+| `UNKNOWN` | V1.0 ✅ | Não identificado, fora do escopo ou sobre dados/lançamentos de outra pessoa |
 | `FAMILY_QUERY` | V1.2 | — |
+
+`COMPARE_PERIODS`, `TOP_EXPENSES` e `CATEGORY_BREAKDOWN` foram modelados como `query_kind`
+(mesma intenção de consulta) em vez de intenções separadas.
 
 O enum do schema contém apenas as intenções da versão corrente.
 
-## 4. Schema de saída (`contract_version v1.0`)
+## 4. Schema de saída (`contract_version v1.1`)
 
 Todos os campos presentes; ausência = `null` (requisito do modo estrito). `additionalProperties: false`.
 
@@ -70,10 +84,16 @@ Todos os campos presentes; ausência = `null` (requisito do modo estrito). `addi
 | `subcategory_id` | integer \| null | id do catálogo fornecido |
 | `transaction_date` | string \| null | `YYYY-MM-DD`, só se mencionada |
 | `query_kind` | `TOTAL` \| `BALANCE` \| null | |
-| `start_date`, `end_date` | string \| null | `YYYY-MM-DD`, intervalo fechado |
+| `start_date`, `end_date` | string \| null | `YYYY-MM-DD`, intervalo fechado (período A em `COMPARE`) |
+| `compare_start_date`, `compare_end_date` | string \| null | período B em `COMPARE` |
+| `limit` | integer \| null | só se o usuário pedir ("5 maiores"); Django aplica padrão 5, máximo 10 |
+| `follow_up` | boolean | mensagem depende da consulta anterior ("e mês passado?") |
+| `reference` | objeto \| null | `UPDATE`: `last` (bool), `transaction_type`, `category_id`, `subcategory_id`, `description`, `amount`, `transaction_date` |
+| `updates` | objeto \| null | `UPDATE`: `amount`, `description`, `category_id`, `subcategory_id`, `transaction_date` (null = não muda) |
 
-Sem `scope`, `target_user`, `confidence` ou qualquer campo de usuário/autorização na V1.0:
-toda consulta é do próprio remetente.
+Objetos aninhados também são estritos (`additionalProperties: false`, todos os campos
+obrigatórios). Não existem `transaction_id`, `scope`, `target_user`, `user_id`, `confidence`
+nem tipo editável: toda operação é do próprio remetente e a transação é escolhida pelo Django.
 
 ```jsonc
 // "10 reais de gasolina" (hoje = 2026-10-06)
@@ -103,7 +123,15 @@ testes de contrato e `CHANGELOG.md`.
 5. Categoria (consulta): id inexistente/incompatível → resposta "não encontrei", nunca fallback.
 6. Datas: ISO estrito; criação sem data → hoje; data futura rejeitada pelo service. Consulta sem
    período → mês corrente até hoje; só início → até hoje; só fim → o próprio dia; `start ≤ end`.
-7. Totais: somente `apps.transactions.selectors` (`get_total`, `get_period_totals`).
+7. Totais, rankings, agrupamentos, listagens e comparações: somente
+   `apps.transactions.selectors` (`get_total`, `get_period_totals`, `get_top_expenses`,
+   `get_totals_by_category`, `list_transactions`, `compare_periods`). Percentual =
+   `(A − B) / B × 100` em `Decimal`, 1 casa, `ROUND_HALF_UP`; com B = 0 não há percentual.
+8. Padrões de consulta: `TOP` = gastos; `BREAKDOWN`/`COMPARE` sem tipo = gastos; `LIST` sem
+   período = mais recentes; `COMPARE` sem período B = mês anterior completo ao início de A.
+9. `UPDATE`: transação resolvida pelo Django (`DOMAIN.md §5`); ids de `updates` revalidados;
+   `update_transaction` reaplica todas as regras. Referência ambígua → nada muda.
+10. `follow_up=true` sem contexto válido → "Não consegui identificar a consulta anterior...".
 
 ## 6. Falhas
 

@@ -21,6 +21,7 @@ from apps.ai.service import AIError, interpret_message
 from common.dates import today_local
 
 from . import actions, messages
+from . import context as conversation
 from .client import EvolutionClient, EvolutionError
 from .models import InboundMessage
 from .services import mark_failed
@@ -40,7 +41,10 @@ def handle_ready_message(record: InboundMessage) -> None:
         return
     today = today_local()
 
-    context = actions.build_context(today=today, timezone=settings.TIME_ZONE)
+    previous_query = conversation.get_previous_query(record.user)
+    context = actions.build_context(
+        today=today, timezone=settings.TIME_ZONE, previous_query=previous_query
+    )
     try:
         result = interpret_message(record.text, context, log_ref=record.provider_message_id)
     except AIError as exc:
@@ -49,7 +53,7 @@ def handle_ready_message(record: InboundMessage) -> None:
         return
 
     try:
-        outcome = _commit(record, result.interpretation, today)
+        outcome = _commit(record, result.interpretation, today, previous_query is not None)
     except Exception:
         # Unexpected failure (e.g. missing fallback category): the atomic block rolled back,
         # so there is no effect; the message becomes FAILED and the user gets a generic reply.
@@ -71,9 +75,11 @@ def handle_ready_message(record: InboundMessage) -> None:
         InboundMessage.objects.filter(pk=record.pk).update(error_code=REPLY_SEND_FAILED)
 
 
-def _commit(record: InboundMessage, interpretation, today) -> "actions.Outcome | None":
+def _commit(
+    record: InboundMessage, interpretation, today, has_context: bool
+) -> "actions.Outcome | None":
     """Validate, then run the effect and mark PROCESSED in one transaction."""
-    plan = actions.plan(interpretation, today=today)
+    plan = actions.plan(interpretation, user=record.user, today=today, has_context=has_context)
     with transaction.atomic():
         locked = (
             InboundMessage.objects.select_for_update(of=("self",))
@@ -90,6 +96,8 @@ def _commit(record: InboundMessage, interpretation, today) -> "actions.Outcome |
         outcome = actions.execute(
             plan, user=locked.user, idempotency_key=idempotency_key(locked), today=today
         )
+        if outcome.query_context is not None:
+            conversation.remember_query(locked.user, outcome.query_context)
         locked.status = Status.PROCESSED
         locked.intent = outcome.intent
         locked.error_code = outcome.code

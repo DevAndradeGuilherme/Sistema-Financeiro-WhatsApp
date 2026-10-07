@@ -1,9 +1,12 @@
 import uuid
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+
+from common.money import TWO_PLACES
 
 
 class TransactionType(models.TextChoices):
@@ -129,3 +132,81 @@ class Transaction(models.Model):
 
     def mark_deleted(self) -> None:
         self.deleted_at = timezone.now()
+
+
+class TransactionChange(models.Model):
+    """Audit trail of financial mutations, also the source of truth for "desfazer".
+
+    - CREATE / UPDATE are reversible (once): an UNDO row points to them via ``reverts``
+      (one-to-one, so the database guarantees a change is never undone twice).
+    - UNDO and DELETE are not reversible (no redo in V1.1).
+    - ``before`` / ``after`` hold only financial fields, money as string (see ``snapshot``).
+    - ``origin`` identifies the request that caused it (e.g. ``whatsapp:<instance>:<id>``),
+      keeping this app independent from the channel.
+    """
+
+    class Action(models.TextChoices):
+        CREATE = "CREATE", "Criação"
+        UPDATE = "UPDATE", "Alteração"
+        DELETE = "DELETE", "Exclusão"
+        UNDO = "UNDO", "Desfazer"
+
+    REVERSIBLE = (Action.CREATE, Action.UPDATE)
+
+    transaction = models.ForeignKey(
+        Transaction, on_delete=models.PROTECT, related_name="changes", verbose_name="transação"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="transaction_changes",
+        verbose_name="autor",
+    )
+    action = models.CharField("ação", max_length=10, choices=Action.choices)
+    before = models.JSONField("antes", null=True, blank=True)
+    after = models.JSONField("depois", null=True, blank=True)
+    reverts = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="reverted_by",
+        verbose_name="desfaz",
+    )
+    origin = models.CharField("origem", max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "alteração de transação"
+        verbose_name_plural = "alterações de transações"
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(action__in=["CREATE", "UPDATE", "DELETE", "UNDO"]),
+                name="transaction_change_action_valid",
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(action="UNDO") & models.Q(reverts__isnull=False))
+                | (~models.Q(action="UNDO") & models.Q(reverts__isnull=True)),
+                name="transaction_change_undo_has_target",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "created_at"], name="transaction_change_user_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.get_action_display()} {self.transaction_id} ({self.created_at:%Y-%m-%d %H:%M})"
+        )
+
+
+def snapshot(transaction: Transaction) -> dict:
+    """Financial fields relevant for audit/undo. Money as string, date as ISO."""
+    return {
+        "amount": str(Decimal(transaction.amount).quantize(TWO_PLACES)),
+        "description": transaction.description,
+        "category_id": transaction.category_id,
+        "subcategory_id": transaction.subcategory_id,
+        "transaction_date": transaction.transaction_date.isoformat(),
+    }

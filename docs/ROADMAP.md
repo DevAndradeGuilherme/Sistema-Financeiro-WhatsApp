@@ -1,6 +1,6 @@
 # Roadmap
 
-Versão atual: **V1.0 funcionalmente concluída** (validada ponta a ponta em DEV, 2026-10-06).
+Versão atual: **V1.1 funcionalmente concluída** (validada ponta a ponta em DEV, 2026-10-07).
 Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
 produção **não** está pronta.
 
@@ -33,10 +33,11 @@ esse mês?" retorna o total correto, ambos ponta a ponta via WhatsApp, com teste
 
 ## V1.1 — Edição, desfazer e consultas avançadas
 
-- `UPDATE_TRANSACTION` e `UNDO_TRANSACTION` (somente transações próprias; soft delete).
-- Consultas por categoria e períodos variados; maiores gastos (`TOP_EXPENSES`);
-  comparação de períodos (`COMPARE_PERIODS`).
-- Contexto conversacional mínimo quando necessário (ex.: referência à última transação).
+- [x] `UPDATE_TRANSACTION` e `UNDO_TRANSACTION` (somente transações próprias; auditoria em
+  `TransactionChange`; undo de criação = soft delete).
+- [x] Consultas avançadas: maiores gastos (`TOP`), por categoria (`BREAKDOWN`), listagem curta
+  (`LIST`), comparação de períodos (`COMPARE`), mantendo `TOTAL`/`BALANCE`.
+- [x] Contexto conversacional mínimo (`ConversationContext`, TTL 20 min) para follow-ups.
 
 ## V1.2 — Famílias
 

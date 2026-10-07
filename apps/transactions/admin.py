@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Transaction
+from .models import Transaction, TransactionChange
 
 
 class DeletedFilter(admin.SimpleListFilter):
@@ -45,6 +45,26 @@ class TransactionAdmin(admin.ModelAdmin):
     date_hierarchy = "transaction_date"
     ordering = ("-transaction_date", "-created_at")
     readonly_fields = [field.name for field in Transaction._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TransactionChange)
+class TransactionChangeAdmin(admin.ModelAdmin):
+    """Audit trail: read-only. Changes happen only through the transaction services."""
+
+    list_display = ("created_at", "action", "transaction", "user", "reverts", "origin")
+    list_filter = ("action",)
+    search_fields = ("transaction__id", "user__username", "origin")
+    list_select_related = ("transaction", "user", "reverts")
+    readonly_fields = [field.name for field in TransactionChange._meta.fields]
 
     def has_add_permission(self, request):
         return False

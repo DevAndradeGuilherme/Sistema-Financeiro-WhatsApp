@@ -168,6 +168,9 @@ OPENAI_TIMEOUT_SECONDS = env("OPENAI_TIMEOUT_SECONDS")
 # Optional; only sent when set (not every model accepts it). See docs/AI_CONTRACT.md.
 OPENAI_REASONING_EFFORT = env("OPENAI_REASONING_EFFORT")
 
+# Follow-up queries ("e mês passado?") reuse the last query for this long.
+CONVERSATION_CONTEXT_TTL_MINUTES = int(env("CONVERSATION_CONTEXT_TTL_MINUTES", "20"))
+
 # --- Security ----------------------------------------------------------------
 
 SESSION_COOKIE_HTTPONLY = True

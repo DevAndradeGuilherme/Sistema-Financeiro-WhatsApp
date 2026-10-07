@@ -39,6 +39,13 @@ OUTPUT = {
     "query_kind": None,
     "start_date": None,
     "end_date": None,
+    # v1.1 fields
+    "follow_up": False,
+    "compare_start_date": None,
+    "compare_end_date": None,
+    "limit": None,
+    "reference": None,
+    "updates": None,
 }
 
 
@@ -192,3 +199,18 @@ def test_logs_do_not_contain_text_key_or_output(caplog):
     assert "10.00" not in logged
     assert "intent=CREATE_TRANSACTION" in logged
     assert "input_tokens=420" in logged
+
+
+def test_follow_up_context_sent_as_separate_developer_message():
+    from dataclasses import replace
+
+    context = replace(CONTEXT, previous_query={"query_kind": "TOTAL", "category_id": 2})
+    client = fake_client()
+    interpret_message("e mês passado?", context, client=client)
+    sent = client.responses.create.call_args.kwargs["input"]
+    assert sent == [
+        {"role": "developer", "content": 'Previous query: {"query_kind":"TOTAL","category_id":2}'},
+        {"role": "user", "content": "e mês passado?"},
+    ]
+    # Instructions do not change with the context (stable prefix).
+    assert client.responses.create.call_args.kwargs["instructions"] == build_instructions(CONTEXT)

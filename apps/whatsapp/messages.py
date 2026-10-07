@@ -3,7 +3,9 @@
 from datetime import date
 from decimal import Decimal
 
-from common.formatting import describe_day, describe_period, format_brl
+from common.formatting import describe_day, describe_period, format_brl, format_date
+
+NEWLINE = "\n"
 
 HELP = (
     "Você pode registrar gastos e receitas ou consultar seus valores. Exemplos:\n"
@@ -23,6 +25,11 @@ INVALID_DATE = "Não entendi a data. Tente, por exemplo: 'ontem' ou 'dia 5'."
 INVALID_PERIOD = "Período inválido: a data inicial deve ser anterior ou igual à final."
 CATEGORY_NOT_FOUND = "Não encontrei essa categoria. Tente, por exemplo: 'quanto gastei esse mês?'."
 TECHNICAL_ERROR = "Não consegui processar sua mensagem agora. Tente novamente em alguns instantes."
+NO_CONTEXT = "Não consegui identificar a consulta anterior. Pode repetir a pergunta completa?"
+NOTHING_TO_UPDATE = "Não identifiquei o que alterar. Exemplo: 'muda o último gasto para 15 reais'."
+NOT_FOUND = "Não encontrei esse lançamento. Pode informar o valor ou a data?"
+NOTHING_TO_UNDO = "Não encontrei nenhuma ação recente para desfazer."
+NO_CHANGE = "Nada foi alterado: o lançamento já tem esses valores."
 
 
 def rejected(reason: str) -> str:
@@ -59,3 +66,124 @@ def balance(*, income: Decimal, expense: Decimal, start: date, end: date, today:
         f"Seu saldo {period} é {format_brl(income - expense)} "
         f"(entradas {format_brl(income)}; gastos {format_brl(expense)})."
     )
+
+
+def _label(is_income: bool) -> str:
+    return "entrada" if is_income else "gasto"
+
+
+def where(category: str, subcategory: str | None) -> str:
+    return f"{category} · {subcategory}" if subcategory else category
+
+
+def ambiguous(*, is_income: bool | None, description: str | None) -> str:
+    noun = {True: "entrada", False: "gasto", None: "lançamento"}[is_income]
+    about = f" de {description}" if description else ""
+    return f"Encontrei mais de um {noun}{about}. Pode me dizer o valor ou a data?"
+
+
+def transaction_updated(
+    *,
+    is_income: bool,
+    old_amount: Decimal,
+    new_amount: Decimal,
+    old_where: str,
+    new_where: str,
+    new_date: date | None,
+    new_description: str | None,
+) -> str:
+    amount = (
+        f"{format_brl(old_amount)} → {format_brl(new_amount)}"
+        if old_amount != new_amount
+        else format_brl(new_amount)
+    )
+    text = f"✏️ {_label(is_income).capitalize()} atualizado: {amount} em {new_where}"
+    if old_where != new_where:
+        text += f" (antes: {old_where})"
+    if new_date is not None:
+        text += f", data {format_date(new_date)}"
+    text += "."
+    if new_description is not None:
+        text += f" Descrição: {new_description}." if new_description else " Descrição removida."
+    return text
+
+
+def undo_create(*, amount: Decimal, where: str) -> str:
+    return f"↩️ Registro de {format_brl(amount)} em {where} desfeito."
+
+
+def undo_update(*, is_income: bool, amount: Decimal, where: str) -> str:
+    article = "A entrada" if is_income else "O gasto"
+    return f"↩️ Alteração desfeita. {article} voltou para {format_brl(amount)} em {where}."
+
+
+def ranked(title: str, rows: list[tuple[str, Decimal]]) -> str:
+    lines = [
+        f"{index}. {label} — {format_brl(value)}" for index, (label, value) in enumerate(rows, 1)
+    ]
+    return NEWLINE.join([title, *lines])
+
+
+def top_expenses(rows: list[tuple[str, Decimal]], *, start: date, end: date, today: date) -> str:
+    period = describe_period(start, end, today)
+    if not rows:
+        return f"Não encontrei gastos {period}."
+    return ranked(f"Seus maiores gastos {period}:", rows)
+
+
+def breakdown(
+    rows: list[tuple[str, Decimal]], *, is_income: bool, start: date, end: date, today: date
+) -> str:
+    period = describe_period(start, end, today)
+    noun = "receitas" if is_income else "gastos"
+    if not rows:
+        return f"Não encontrei {noun} {period}."
+    return ranked(f"{noun.capitalize()} por categoria {period}:", rows)
+
+
+def listing(
+    rows: list[tuple[date, str, Decimal, bool]],
+    *,
+    type_: str | None,
+    period: tuple[date, date] | None,
+    today: date,
+) -> str:
+    noun = {"EXPENSE": "gastos", "INCOME": "entradas", None: "lançamentos"}[type_]
+    when = describe_period(*period, today) if period else None
+    if not rows:
+        return f"Não encontrei {noun}" + (f" {when}." if when else ".")
+    title = f"Seus {noun} {when}:" if when else f"Seus últimos {noun}:"
+    lines = [
+        f"{index}. {day:%d/%m} — {label} — {'+' if is_income and type_ is None else ''}"
+        f"{format_brl(value)}"
+        for index, (day, label, value, is_income) in enumerate(rows, 1)
+    ]
+    return NEWLINE.join([title, *lines])
+
+
+def comparison(
+    *,
+    is_income: bool,
+    current: Decimal,
+    previous: Decimal,
+    percent: Decimal | None,
+    scope: str | None,
+    period_a: tuple[date, date],
+    period_b: tuple[date, date],
+    today: date,
+) -> str:
+    verb = "recebeu" if is_income else "gastou"
+    scope_text = f" {'em' if is_income else 'com'} {scope}" if scope else ""
+    a = describe_period(*period_a, today)
+    b = describe_period(*period_b, today)
+    text = f"Você {verb} {format_brl(current)}{scope_text} {a} e {format_brl(previous)} {b}"
+    difference = current - previous
+    if difference == 0:
+        return text + ": o mesmo valor."
+    direction = "a mais" if difference > 0 else "a menos"
+    text += f": {format_brl(abs(difference))} {direction}"
+    if percent is None:
+        nothing = "nada recebido" if is_income else "sem gastos"
+        return text + f" ({nothing} no período anterior)."
+    sign = "+" if percent > 0 else ""
+    return text + f" ({sign}{str(percent).replace('.', ',')}%)."

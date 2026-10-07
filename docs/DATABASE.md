@@ -93,6 +93,27 @@ Querysets: o manager padrão não deve esconder registros excluídos de forma im
 Admin; selectors de domínio **sempre** filtram `deleted_at IS NULL` explicitamente ou via
 queryset method nomeado (`.active()`).
 
+### `transactions.TransactionChange` (V1.1)
+
+| Campo | Tipo | Regras |
+|---|---|---|
+| `transaction` | FK Transaction | `PROTECT` |
+| `user` | FK User | autor; `PROTECT`; índice `(user, created_at)` |
+| `action` | varchar | `CREATE` \| `UPDATE` \| `DELETE` \| `UNDO`; `CHECK` |
+| `before`, `after` | jsonb, null | `amount` (string), `description`, `category_id`, `subcategory_id`, `transaction_date` |
+| `reverts` | OneToOne self, null | só em `UNDO` (`CHECK`); unicidade = cada ação desfeita no máximo uma vez |
+| `origin` | varchar | ex.: `whatsapp:<instância>:<id>` |
+| `created_at` | timestamptz | |
+
+### `whatsapp.ConversationContext` (V1.1)
+
+| Campo | Tipo | Regras |
+|---|---|---|
+| `user` | OneToOne User | `CASCADE`; uma linha por usuário |
+| `last_query` | jsonb | parâmetros validados da última consulta (ids, datas, tipo, limite) |
+| `expires_at` | timestamptz | `now + CONVERSATION_CONTEXT_TTL_MINUTES` |
+| `updated_at` | timestamptz | |
+
 ### `whatsapp.InboundMessage`
 
 | Campo | Tipo | Regras |

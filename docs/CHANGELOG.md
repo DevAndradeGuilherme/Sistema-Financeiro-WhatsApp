@@ -6,6 +6,24 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — V1.1: edição, desfazer e consultas avançadas
+- `update_transaction` (dono, transação ativa, campos financeiros; regras da criação reaplicadas)
+  e `undo_last_change` (pilha CREATE/UPDATE; undo de criação = soft delete; sem redo).
+- `TransactionChange`: auditoria de CREATE/UPDATE/DELETE/UNDO com antes/depois, autor, origem;
+  `reverts` one-to-one impede desfazer duas vezes. Admin somente leitura.
+- Selectors `find_transactions` (referência restrita ao usuário, 90 dias) e `compare_periods`
+  (diferença e percentual em Decimal, ROUND_HALF_UP).
+- Contrato de IA v1.1: `UPDATE_TRANSACTION`, `UNDO_TRANSACTION`, `query_kind`
+  TOP/BREAKDOWN/LIST/COMPARE, `follow_up`, `limit`, período B, objetos `reference`/`updates`.
+- `ConversationContext` (TTL `CONVERSATION_CONTEXT_TTL_MINUTES`, padrão 20) para follow-ups,
+  enviado à IA como mensagem `developer` estruturada.
+- Respostas locais para edição, desfazer, ranking, agrupamento, listagem e comparação.
+
+### Changed
+- Mutações por usuário serializadas (lock da linha do usuário); fixtures do contrato atualizadas
+  para v1.1; fixtures do pipeline movidas para `apps/whatsapp/tests/conftest.py`.
+
+
 ### Added — pipeline textual com IA (V1.0 funcionalmente concluída)
 - App `ai`: SDK oficial `openai` 2.54 (Responses API), Structured Outputs estrito, `store=False`,
   uma chamada por mensagem (`max_retries=0`), contrato `v1.0` (ids de categoria do catálogo,
