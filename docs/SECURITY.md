@@ -120,6 +120,8 @@ chamadas à Evolution sempre com timeout.
   (`IMAGE_MAX_PIXELS`, checado no cabeçalho antes de decodificar; bomba de descompressão vira erro).
 - EXIF/GPS e metadados de texto removidos na regravação; a OpenAI recebe **somente** a versão
   normalizada (nunca os bytes originais), `store=False`.
+- Perfis ICC incorporados também são removidos explicitamente após aplicar a orientação:
+  regravar PNG sem argumento `icc_profile` não basta, pois Pillow pode herdar esse campo.
 - `ReceiptAttachment`: só metadados técnicos; Admin read-only, sem visualização de imagem.
 - Logs técnicos apenas (id, bytes, formato, dimensões, modelo, tokens, códigos) — nunca imagem,
   base64, valores, descrição, CPF/CNPJ, chave Pix ou telefone.

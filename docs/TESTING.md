@@ -119,18 +119,20 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   UPDATE/UNDO, família, contexto texto↔áudio, filtros antes do download, idempotência,
   concorrência, falhas, limites, privacidade). Download/transcrição mockados na fronteira.
 - V1.4: `common/tests/test_images.py` (formatos, falsificação, corrupção, limites, bomba,
-  animação, EXIF/GPS), `apps/ai/tests/test_vision.py` e `apps/whatsapp/tests/test_image.py`
+  animação, EXIF/GPS, ICC e preservação da transparência), `apps/ai/tests/test_vision.py` e `apps/whatsapp/tests/test_image.py`
   (pipeline real com Pillow e domínio; Evolution e visão mockados nos clients; qualquer outro
   acesso de rede — ex. Storage — falha o teste; `storage_path` NULL, sem `SUPABASE_*`/service
   role, hash dos bytes normalizados, sem bytes/base64 no banco, idempotência, concorrência,
-  falhas de visão/commit/anexo, privacidade).
+  falhas de visão/commit/anexo, privacidade). A regressão de commit injeta erro na chamada
+  de commit após os INSERTs e verifica rollback do ledger/anexo e reentrega sem novo efeito.
 - V1.5: `apps/transactions/tests/test_analytics.py` (resumo, evolução mensal, variação por
   categoria, percentuais `Decimal`, receitas = 0, saldo negativo, >100%, soft delete, edição,
   escopos FAMILY/FAMILY_MEMBER, agregação no banco) e `apps/whatsapp/tests/test_pipeline_v15.py`
   (PERIOD_SUMMARY/MONTHLY_TREND/CATEGORY_TREND ponta a ponta: SELF, ADMIN família/membro, MEMBER
   negado, membro externo, contexto manipulado, perda de papel, follow-ups, `months` padrão/3/12/
   acima do máximo, precedência de `months` sobre `start_date` e janela efetiva no contexto,
-  1 chamada de IA, nenhuma mutação, falha de envio sem recálculo).
+  1 chamada de IA, nenhuma mutação, falha de envio sem recálculo, janela histórica com ano
+  verificada por expectativa literal independente do helper de formatação).
 - Validação ao vivo V1.5 (2026-10-07): 8 mensagens reais pelo WhatsApp do ADMIN DEV; para cada uma,
   `InboundMessage` PROCESSED, 1 chamada OpenAI, 1 envio, contagens de `Transaction`/`TransactionChange`
   inalteradas e valores conferidos por SQL somente leitura no Supabase DEV (incluindo uma despesa

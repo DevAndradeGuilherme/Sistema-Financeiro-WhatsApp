@@ -3,6 +3,8 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from apps.whatsapp import messages
 
 TODAY = date(2026, 10, 8)
@@ -82,3 +84,20 @@ def test_update_lists_every_change():
 
 def test_ambiguous_member_agrees_with_pessoa():
     assert "uma pessoa chamada Ana" in messages.member_ambiguous("Ana")
+
+
+@pytest.mark.parametrize(
+    "period,expected",
+    [
+        (None, "Estas são suas últimas receitas:"),
+        (OCTOBER, "Estas foram suas receitas em outubro:"),
+    ],
+)
+def test_income_listing_agrees_with_receitas(period, expected):
+    text = messages.listing(
+        [(TODAY, "Salário", Decimal("100.00"), True)],
+        type_="INCOME",
+        period=period,
+        today=TODAY,
+    )
+    assert text == expected + "\n\nSalário: R$ 100,00 (08/10)"

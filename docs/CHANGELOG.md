@@ -6,6 +6,17 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Fixed — auditoria estrutural final
+- Normalização de imagens remove explicitamente metadados herdados, inclusive o perfil ICC
+  que o encoder PNG preservava implicitamente; orientação e SHA-256 dos bytes enviados mantidos.
+- Evolução mensal histórica explicita a janela e o ano; listagem de receitas corrige
+  concordância de gênero. Sem alteração de cálculos, autorização ou chamadas de IA.
+- Documentada a limitação de reversão da migration `whatsapp/0005` com linhas NULL.
+- Regressões para ICC na fronteira Vision, mensagens com expectativas literais e falha no
+  commit PostgreSQL após persistir transação/anexo. Relatório em `docs/AUDIT-FINAL.md`.
+- Validação final: **809 testes passando** em PostgreSQL local (800 no baseline, 9 novos);
+  Ruff check/format, Django check, migrations check, pip check e git diff check aprovados.
+
 ### Added — gestão operacional pelo Django Admin
 - UserAdmin com nome, username, telefone, status, privilégios e família/papel atuais; filtro
   com/sem família e consultas sem N+1. Cadastro sugere senha inutilizável; senha explícita

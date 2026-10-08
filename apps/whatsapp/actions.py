@@ -707,7 +707,7 @@ def _execute_query(p: QueryPlan, user: User, today: date) -> Outcome:
         trend = analytics.monthly_trend(
             scope=scope, months=p.months, end_month=end_month, metric=p.metric
         )
-        reply = messages.monthly_trend(trend, capped=p.months_capped, who=who)
+        reply = messages.monthly_trend(trend, today=today, capped=p.months_capped, who=who)
     elif p.kind == "CATEGORY_TREND":
         changes = analytics.category_trend(
             scope=scope,

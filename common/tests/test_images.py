@@ -156,3 +156,32 @@ def test_png_text_metadata_removed():
     data = make("PNG", pnginfo=info)
     assert b"Fulano" in data
     assert b"Fulano" not in normalize(data).data
+
+
+@pytest.mark.parametrize("fmt", ["JPEG", "PNG", "WEBP"])
+def test_embedded_color_profile_removed_without_changing_orientation(fmt):
+    profile = b"synthetic-private-profile-marker"
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    original = make(fmt, exif=exif, icc_profile=profile)
+    with Image.open(io.BytesIO(original)) as image:
+        assert image.info["icc_profile"] == profile
+
+    result = normalize(original)
+    with Image.open(io.BytesIO(result.data)) as image:
+        assert "icc_profile" not in image.info
+        assert not image.getexif()
+        assert image.size == (80, 120)
+
+
+def test_png_profile_removal_preserves_palette_transparency():
+    source = Image.new("P", (120, 80), 0)
+    source.putpalette([255, 0, 0, 0, 255, 0] + [0] * 762)
+    source.putpixel((1, 0), 1)
+    buffer = io.BytesIO()
+    source.save(buffer, "PNG", transparency=0, icc_profile=b"synthetic-profile")
+    result = normalize(buffer.getvalue())
+    with Image.open(io.BytesIO(result.data)) as cleaned:
+        assert "icc_profile" not in cleaned.info
+        assert cleaned.getpixel((0, 0)) == (255, 0, 0, 0)
+        assert cleaned.getpixel((1, 0)) == (0, 255, 0, 255)

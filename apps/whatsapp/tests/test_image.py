@@ -19,7 +19,7 @@ from unittest import mock
 
 import pytest
 from django.conf import settings
-from django.db import IntegrityError, connections
+from django.db import IntegrityError, OperationalError, connection, connections
 from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
@@ -189,6 +189,21 @@ def test_storage_is_gone_and_service_role_not_needed(client, alice, evolution, d
         assert not hasattr(settings, name)
     post_image(client)  # works end to end without any Storage configuration
     assert Transaction.objects.count() == ReceiptAttachment.objects.count() == 1
+
+
+def test_png_profile_never_reaches_vision(client, alice, evolution, download, vision):
+    buffer = io.BytesIO()
+    Image.new("RGB", (120, 80)).save(buffer, "PNG", icc_profile=b"synthetic-private-profile-marker")
+    download.return_value = DownloadedMedia(buffer.getvalue(), "image/png")
+    post_image(client)
+    vision.assert_called_once()
+    normalized = vision.call_args.args[0]
+    with Image.open(io.BytesIO(normalized)) as image:
+        assert "icc_profile" not in image.info
+    attachment = ReceiptAttachment.objects.get()
+    assert attachment.sha256 == hashlib.sha256(normalized).hexdigest()
+    assert attachment.byte_size == len(normalized)
+    assert attachment.storage_bucket is None and attachment.storage_path is None
 
 
 def test_pix_received_creates_income(client, alice, catalog, evolution, download, vision):
@@ -523,6 +538,36 @@ def test_attachment_persistence_failure_rolls_back_and_terminates_message(
     assert not Transaction.objects.exists()  # rolled back with the attachment
     assert not ReceiptAttachment.objects.exists()
     assert reply(evolution) == messages.TECHNICAL_ERROR
+
+
+@pytest.mark.django_db(transaction=True)
+def test_database_commit_failure_rolls_back_effect_and_remains_idempotent(
+    client, alice, evolution, download, vision
+):
+    original_commit = connection.commit
+    failed = False
+
+    def fail_effect_commit():
+        nonlocal failed
+        if not failed and ReceiptAttachment.objects.filter(status=AStatus.PROCESSED).exists():
+            assert Transaction.objects.count() == TransactionChange.objects.count() == 1
+            failed = True
+            raise OperationalError("synthetic commit failure")
+        return original_commit()
+
+    with mock.patch.object(connection, "commit", side_effect=fail_effect_commit):
+        record = post_image(client)
+    assert failed
+    record.refresh_from_db()
+    assert (record.status, record.error_code) == (Status.FAILED, "IMAGE_PIPELINE_ERROR")
+    assert record.transaction_id is None
+    assert not Transaction.objects.exists() and not TransactionChange.objects.exists()
+    attachment = ReceiptAttachment.objects.get()
+    assert attachment.status == AStatus.FAILED and attachment.transaction_id is None
+    post_image(client)
+    download.assert_called_once()
+    vision.assert_called_once()
+    evolution.assert_called_once()
 
 
 def test_failure_row_not_writable_still_fails_message(client, alice, evolution, download, vision):

@@ -9,7 +9,7 @@ Untrusted bytes in → re-encoded bytes out:
 - EXIF orientation applied, then the image is re-encoded **without any metadata** (EXIF/GPS,
   ICC text chunks, comments). JPEG stays JPEG (quality 92, no extra subsampling), PNG stays
   PNG, WEBP stays WEBP (quality 92), static GIF becomes PNG;
-- SHA-256 of the normalized bytes (what is stored and sent to the vision model).
+- SHA-256 of the normalized bytes sent to the vision model; no image is retained.
 
 No OCR here: reading the document is the vision model's job.
 """
@@ -124,6 +124,9 @@ def _check_dimensions(size: tuple[int, int], max_pixels: int) -> None:
 
 
 def _encode(image: Image.Image, out_format: str) -> bytes:
+    # PNG implicitly inherits ICC from image.info, even without a save argument.
+    # Keep transparency until conversion so stripping metadata preserves visible pixels.
+    image.info.pop("icc_profile", None)
     buffer = io.BytesIO()
     if out_format == "JPEG":
         image.convert("RGB").save(buffer, "JPEG", quality=92, subsampling=0, optimize=True)
@@ -133,7 +136,7 @@ def _encode(image: Image.Image, out_format: str) -> bytes:
     else:  # PNG (also for static GIF)
         mode = "RGBA" if image.mode in ("RGBA", "LA", "P", "PA") else "RGB"
         image.convert(mode).save(buffer, "PNG", optimize=True)
-    # No exif=/pnginfo=/icc_profile= arguments: metadata is dropped by construction.
+    # EXIF/text are not supplied; ICC cannot be inherited. Transparency is kept as pixels.
     return buffer.getvalue()
 
 

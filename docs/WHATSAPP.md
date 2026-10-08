@@ -187,6 +187,9 @@ Retenção de `InboundMessage` deve ser definida antes da produção.
   "Outubro: R$ 1.050,00" + "A média mensal ficou em R$ 325,00."; variação por categoria "Em
   outubro, os maiores aumentos nos seus gastos em relação a setembro foram:" +
   "Transporte: +R$ 300,00 (+60,0%)". Só fatos, sem aconselhamento.
+- Evolução mensal ancorada em um mês passado informa a janela efetiva, por exemplo
+  "De novembro de 2025 a dezembro de 2025"; linhas de outro ano incluem o ano mesmo
+  quando a janela inteira pertence a esse único ano.
 
 Comandos (nunca imprimem API key nem segredo):
 

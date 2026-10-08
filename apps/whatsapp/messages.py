@@ -320,10 +320,12 @@ def listing(
     when = describe_period(*period, today) if period else None
     if not rows:
         return f"Não encontrei {noun}{_of(who)}" + (f" {when}." if when else ".")
+    demonstrative = "Estas" if feminine else "Estes"
     if when:
-        intro = f"Estes foram {_their(noun, who, feminine=feminine)} {when}:"
+        intro = f"{demonstrative} foram {_their(noun, who, feminine=feminine)} {when}:"
     else:
-        intro = f"Estes são {_their(f'últimos {noun}', who, feminine=feminine)}:"
+        recent = "últimas" if feminine else "últimos"
+        intro = f"{demonstrative} são {_their(f'{recent} {noun}', who, feminine=feminine)}:"
     lines = [
         f"{label}: {format_brl(value)} ({day:%d/%m}{', receita' if income and not type_ else ''})"
         for day, label, value, income in rows
@@ -400,7 +402,7 @@ def period_summary(summary, *, start: date, end: date, today: date, who: str | N
     return "\n\n".join(paragraphs)
 
 
-def monthly_trend(trend, *, capped: bool = False, who: str | None = None) -> str:
+def monthly_trend(trend, *, today: date, capped: bool = False, who: str | None = None) -> str:
     if not trend.has_data:
         return NO_DATA
     if trend.metric == "BALANCE":
@@ -411,13 +413,21 @@ def monthly_trend(trend, *, capped: bool = False, who: str | None = None) -> str
         subject, verb = _their("gastos", who), "foram"
     count = len(trend.points)
     window = "No último mês" if count == 1 else f"Nos últimos {count} meses"
+    first, last = trend.points[0].month, trend.points[-1].month
+    if last != today.replace(day=1):
+        end_label = f"{MONTHS[last.month - 1]} de {last.year}"
+        window = (
+            f"Em {end_label}"
+            if count == 1
+            else f"De {MONTHS[first.month - 1]} de {first.year} a {end_label}"
+        )
     if capped:
         window += " (o máximo que consigo mostrar)"
     years = {p.month.year for p in trend.points}
     rows = []
     for p in trend.points:
         label = _cap(MONTHS[p.month.month - 1])
-        if len(years) > 1:
+        if len(years) > 1 or p.month.year != today.year:
             label += f" de {p.month.year}"
         rows.append(f"{label}: {format_brl(p.value(trend.metric))}")
     return _lines(

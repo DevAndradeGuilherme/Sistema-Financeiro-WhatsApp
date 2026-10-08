@@ -6,7 +6,7 @@ aggregates, and the reply is formatted locally. Domain math is covered in
 and side effects.
 """
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 from django.utils import timezone
@@ -234,6 +234,25 @@ def test_monthly_trend_expense_default_six_months(client, alice, ledger, ai, evo
         "\n".join(trend_lines({2: "R$ 100,00", 1: "R$ 800,00", 0: "R$ 1.050,00"}, 6)),
         "A média mensal ficou em R$ 325,00.",
     ]
+
+
+def test_historical_monthly_trend_names_actual_window_and_year(
+    client, alice, catalog, ai, evolution, make_transaction
+):
+    make_transaction(
+        user=alice,
+        category=catalog["transporte"],
+        amount="20.00",
+        transaction_date=date(2025, 12, 1),
+    )
+    ai.set(query(query_kind="MONTHLY_TREND", months=2, end_date="2025-12-31"))
+    deliver(client, "gastos de novembro e dezembro de 2025")
+    assert reply(evolution) == (
+        "De novembro de 2025 a dezembro de 2025, seus gastos foram:\n\n"
+        "Novembro de 2025: R$ 0,00\nDezembro de 2025: R$ 20,00\n\n"
+        "A média mensal ficou em R$ 10,00."
+    )
+    assert ai.call_count == 1
 
 
 def test_monthly_trend_income_three_months(client, alice, ledger, ai, evolution):

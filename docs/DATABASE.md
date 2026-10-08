@@ -145,6 +145,12 @@ linha nova, OCR, chave, payload bruto. RLS habilitado como nas demais tabelas.
 
 ### Storage legado (V1.4, desativado em 2026-10-08)
 
+- A migration `whatsapp/0005` preserva os valores legados e apenas permite `NULL` em
+  `storage_bucket`/`storage_path`, ajustando o CHECK. Sua reversão restaura `NOT NULL`:
+  **falha se houver linhas novas com NULL**. Não preencher referências fictícias nem excluir
+  metadados para forçar rollback. Nesse estado, manter o schema expandido e uma versão do
+  aplicativo compatível com no-Storage; qualquer retorno ao schema anterior exige plano de
+  dados específico. Voltar ao runtime antigo também reativaria Storage.
 - A aplicação não usa mais Supabase Storage nem `SUPABASE_SERVICE_ROLE_KEY`; cliente Storage e
   `storage_check` foram removidos (migration `whatsapp/0005` tornou `storage_*` anuláveis, sem
   apagar dados).
