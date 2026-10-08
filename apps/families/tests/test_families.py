@@ -64,7 +64,7 @@ def test_visibility_policy(make_user):
     assert not can_view_user_data(actor=outsider, target_user=member)
 
 
-def test_admin_inline_requires_exactly_one_admin(admin_client, alice, bob):
+def test_admin_creation_requires_exactly_one_admin(admin_client, alice, bob):
     data = {
         "name": "Silva",
         "memberships-TOTAL_FORMS": "2",
@@ -78,7 +78,13 @@ def test_admin_inline_requires_exactly_one_admin(admin_client, alice, bob):
     assert response.status_code == 200  # form redisplayed with error
     assert not FamilyMember.objects.exists()
 
-    data["memberships-1-role"] = "MEMBER"
+    data = {"name": "Silva", "admin_user": alice.pk}
     response = admin_client.post("/admin/families/family/add/", data)
+    assert response.status_code == 302
+    family = Family.objects.get(name="Silva")
+    assert family.memberships.get().user == alice
+    response = admin_client.post(
+        f"/admin/families/family/{family.pk}/add-member/", {"user": bob.pk}
+    )
     assert response.status_code == 302
     assert FamilyMember.objects.count() == 2

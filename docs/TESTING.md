@@ -61,6 +61,26 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   usuários de famílias diferentes isolados; usuário sem família isolado.
 - Saída da IA com `scope: FAMILY`/`target_user` de outro usuário enviada por MEMBER → negado.
 
+### Gestão operacional no Django Admin
+
+- `accounts/tests/test_admin_operations.py`: cadastro sem senha ou com senha explícita, telefone
+  canônico e duplicatas equivalentes em add/change, ativação/desativação preservando histórico,
+  bloqueio de inativos antes dos pipelines de texto/áudio/imagem, exclusão bloqueada, proteção
+  contra autopromoção/tomada de outra conta staff e consultas sem N+1.
+- `families/tests/test_admin_operations.py`: ADMIN inicial obrigatório, inclusão somente MEMBER,
+  duplicata/outra família negadas, remoção preserva snapshot, transferência restrita à família,
+  rollback durante promoção e falha do LogEntry, GET sem mutação, CSRF, matriz de permissões e
+  duas transferências concorrentes em conexões PostgreSQL separadas (mesmo destino ou destinos
+  diferentes). A unique parcial existente permanece como proteção adicional.
+- Regressões V1.2 continuam cobrindo tentativas de zero/dois ADMINs e rebaixamento isolado,
+  adaptadas à interface explícita que substituiu o inline editável.
+- `whatsapp/tests/test_admin_privacy.py`: contexto/mensagem/anexo somente leitura, transcrições
+  ocultas e referências legadas sem links, incluindo anexos novos com `storage_* = NULL`.
+- Smoke operacional local: login de superuser DEV, cadastro de três usuários fictícios,
+  criação de família, inclusão de dois MEMBERs, transferência, remoção do ADMIN negada,
+  desativação e páginas financeiras/anexos somente leitura. Usar banco PostgreSQL local
+  descartável e limpar os dados ao final; nunca inserir dados financeiros reais.
+
 ### Categorias
 - Somente slugs ativos aceitos; `kind` compatível; subcategoria pertence à categoria;
   fallback aplicado; IA não cria categoria.

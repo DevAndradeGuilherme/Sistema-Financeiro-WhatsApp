@@ -6,6 +6,27 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — gestão operacional pelo Django Admin
+- UserAdmin com nome, username, telefone, status, privilégios e família/papel atuais; filtro
+  com/sem família e consultas sem N+1. Cadastro sugere senha inutilizável; senha explícita
+  continua disponível, sem exibição de hash. Telefone usa o normalizador existente antes de
+  validar tamanho/unicidade, inclusive formatos brasileiros equivalentes.
+- FamilyAdmin com ADMIN/membros visíveis e operações explícitas para ADMIN inicial, inclusão,
+  remoção e transferência. Transferência atômica com lock da família, validação do destino e
+  LogEntry no mesmo commit; inclusão/remoção compartilham o lock. FamilyMember somente leitura.
+- Desativação mantém todo o histórico. Exclusão administrativa de User/Family bloqueada,
+  evitando cascatas e perda de identidade; FKs e schema inalterados.
+- ConversationContext registrado somente leitura; conteúdo de mensagens/transcrições oculto;
+  ReceiptAttachment com metadados e seção LEGACY sem links. Ledger e catálogo mantêm proteções.
+- Staff limitado não pode modificar outra conta staff nem seus próprios privilégios.
+- Regressões de autorização, histórico, rollback, concorrência PostgreSQL, privacidade e N+1.
+  Nenhuma migration, dependência nova, alteração de RLS ou integração Storage.
+- Validação automatizada: **800 testes passando** em PostgreSQL (baseline 752; 48 novos),
+  Ruff check/format, Django check, migrations check, pip check e git diff check aprovados.
+- Smoke operacional local concluído com três usuários fictícios, família com dois MEMBERs,
+  transferência, bloqueio de remoção do ADMIN, desativação e telas financeiras/anexos somente leitura;
+  banco PostgreSQL descartável destruído ao final.
+
 ### Changed — comprovantes sem armazenamento
 - Imagens de comprovante são processadas de forma efêmera, em memória, e **não são retidas**: download, validação,
   normalização (sem EXIF/GPS) e visão acontecem em memória; nada vai para Storage, disco, banco

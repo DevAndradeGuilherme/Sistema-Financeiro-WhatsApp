@@ -29,6 +29,10 @@ Ao concluir uma versão, atualizar a linha "Versão atual" e o `CHANGELOG.md`.
 - [x] Fallback explícito de categoria (`is_fallback`).
 - [x] Django Admin para usuários, famílias, categorias e transações.
 - [x] Django Admin para mensagens (somente leitura).
+- [x] Consolidação operacional final (2026-10-08): UserAdmin com cadastro/telefone/ativação,
+  famílias com ADMIN inicial, inclusão/remoção de MEMBER e transferência atômica de ADMIN;
+  diagnósticos/ledger somente leitura, exclusões User/Family bloqueadas. Sem versão futura,
+  painel próprio, migrations ou alteração dos status de validação ao vivo.
 
 Pronto quando: "10 reais de gasolina" cria transação correta e "quanto gastei de transporte
 esse mês?" retorna o total correto, ambos ponta a ponta via WhatsApp, com testes cobrindo

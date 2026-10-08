@@ -27,6 +27,19 @@ Revisores (Codex) devem usar este documento como checklist.
 - Negações não revelam existência de outros usuários/transações.
 - Django Admin: apenas staff; usar permissões do Django; superusers limitados ao necessário.
   Admin em produção atrás de HTTPS; considerar restrição por IP/URL não padrão.
+- Family ADMIN/MEMBER são independentes de staff/superuser/permissões Django. Staff limitado
+  não altera privilégios nem contas de superuser ou de outro staff (inclusive pelo endpoint de senha).
+- Gestão familiar exige permissões explícitas: criar = `add_family` + `add_familymember`;
+  adicionar/remover/transferir = `change_family` + respectivamente `add_familymember`,
+  `delete_familymember`, `change_familymember`. Views usam `admin_site.admin_view`, CSRF e POST;
+  GET não altera estado. Services de transferência/remoção revalidam o operador.
+- Transferência registra no Django `LogEntry` o operador e ids do ADMIN anterior/destino,
+  no mesmo atomic da mudança. Sem telefone, senha ou dados financeiros no texto do evento.
+- `Transaction`, `TransactionChange`, `InboundMessage`, `ConversationContext` e `ReceiptAttachment`
+  não aceitam add/change/delete nem ações financeiras pelo Admin, mesmo para superusers.
+  Mensagens não exibem `text` (inclui transcrições); UserAdmin não mostra hashes de senha.
+  Anexos mostram somente metadados: referências de Storage em seção LEGACY, sem links ou previews.
+  O catálogo continua editável exclusivamente por superuser com as constraints existentes.
 
 ## 3. IA
 

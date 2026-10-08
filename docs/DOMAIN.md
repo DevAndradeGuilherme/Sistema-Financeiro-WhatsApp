@@ -33,6 +33,14 @@ Transaction N ── 0..1 Subcategory
 - Cadastro de usuários do canal é feito pelo administrador do sistema no Django Admin
   no MVP. Não há auto-cadastro via WhatsApp.
 - Usuário inativo (`is_active=False`) não é atendido pelo canal.
+- Django Admin é a interface operacional inicial: cadastro, dados básicos e ativação/desativação.
+  O cadastro sugere autenticação por senha desabilitada (`unusable password`), suficiente para
+  WhatsApp; senha de login só quando escolhida explicitamente, sem senha padrão ou hash na tela.
+  Telefone passa pelo mesmo `common.phone.normalize_phone` do canal, antes da validação de
+  tamanho/unicidade do formulário (incluindo o 9º dígito brasileiro).
+- Desativação é preferível a exclusão: mantém memberships, mensagens e todo o histórico.
+  Exclusão de usuários pelo Admin é bloqueada, inclusive sem transações, pois o CASCADE do
+  membership poderia deixar uma família sem ADMIN e o SET_NULL perderia identidade de mensagens.
 
 ### Family e FamilyMember (`families`)
 
@@ -43,6 +51,17 @@ Transaction N ── 0..1 Subcategory
 - Uma família tem **exatamente um ADMIN**: no máximo um garantido pelo banco (unique parcial
   `family_single_admin`); "ao menos um" garantido por `create_family` (cria família + ADMIN
   atomicamente) e pelo formulário do Django Admin.
+- No Admin, criar família exige ADMIN inicial; adicionar usuário sempre cria MEMBER. Inclusão
+  reutiliza os services existentes. `FamilyMemberAdmin` e a relação de membros são somente leitura;
+  operações ficam na página da família. Famílias não podem ser excluídas pelo Admin.
+- **Transferir administração** exige um MEMBER atual da mesma família. O service recebe o
+  operador Django, exige permissões e executa em `transaction.atomic()`: lock da família,
+  validação de exatamente um ADMIN, rebaixamento do atual, promoção do destino e validação final.
+  Inclusão, remoção e transferência compartilham o lock `FOR NO KEY UPDATE` da família; inclusão
+  também trava o usuário para serializar tentativas de entrada em famílias diferentes.
+  O lock não bloqueia referências por FK do ledger. Remover ADMIN isoladamente é proibido.
+- Remover MEMBER não modifica `Transaction.family` nem transfere/apaga histórico. ADMIN/MEMBER
+  nunca concedem `is_staff`, `is_superuser`, grupos ou permissões Django.
 - Estrutura existe desde a V1.0; funcionalidades familiares são liberadas na V1.2.
   Antes disso, todo usuário opera como se estivesse sozinho.
 - `Transaction.family` registra a família do dono **no momento da criação**; é derivada pelo

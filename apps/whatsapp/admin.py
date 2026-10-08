@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import InboundMessage, ReceiptAttachment
+from .models import ConversationContext, InboundMessage, ReceiptAttachment
 
 
 @admin.register(InboundMessage)
@@ -22,7 +22,9 @@ class InboundMessageAdmin(admin.ModelAdmin):
     search_fields = ("provider_message_id", "sender_phone", "user__username")
     list_select_related = ("user", "transaction")
     date_hierarchy = "received_at"
-    readonly_fields = [field.name for field in InboundMessage._meta.fields]
+    # Text can contain audio transcripts. Diagnostics never expose message contents.
+    exclude = ("text",)
+    readonly_fields = [field.name for field in InboundMessage._meta.fields if field.name != "text"]
 
     def has_add_permission(self, request):
         return False
@@ -51,6 +53,55 @@ class ReceiptAttachmentAdmin(admin.ModelAdmin):
     search_fields = ("id", "sha256", "inbound_message__provider_message_id")
     list_select_related = ("transaction", "inbound_message")
     readonly_fields = [field.name for field in ReceiptAttachment._meta.fields]
+    fieldsets = (
+        (
+            "Metadados técnicos",
+            {
+                "fields": (
+                    "id",
+                    "status",
+                    "document_type",
+                    "transaction",
+                    "inbound_message",
+                    "content_type",
+                    "byte_size",
+                    "sha256",
+                    "width",
+                    "height",
+                    "error_code",
+                    "created_at",
+                    "updated_at",
+                )
+            },
+        ),
+        (
+            "LEGACY — armazenamento desativado",
+            {
+                "classes": ("collapse",),
+                "fields": ("storage_bucket", "storage_path"),
+                "description": (
+                    "Referências antigas; sem acesso à imagem. Novos registros usam NULL."
+                ),
+            },
+        ),
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ConversationContext)
+class ConversationContextAdmin(admin.ModelAdmin):
+    list_display = ("user", "expires_at", "updated_at")
+    search_fields = ("user__username",)
+    list_select_related = ("user",)
+    readonly_fields = [field.name for field in ConversationContext._meta.fields]
 
     def has_add_permission(self, request):
         return False

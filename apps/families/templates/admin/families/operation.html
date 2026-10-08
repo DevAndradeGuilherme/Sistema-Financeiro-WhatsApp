@@ -1,0 +1,18 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Início</a> &rsaquo;
+  <a href="{% url 'admin:families_family_changelist' %}">Famílias</a> &rsaquo;
+  {% if original %}<a href="{% url 'admin:families_family_change' original.pk %}">{{ original }}</a> &rsaquo;{% endif %}
+  {{ title }}
+</div>
+{% endblock %}
+{% block content %}
+<p>ADMIN e MEMBER são papéis familiares e não concedem acesso ao Django Admin.</p>
+<p>Transfira a administração antes de remover o ADMIN atual. O histórico financeiro será preservado.</p>
+<form method="post">{% csrf_token %}
+  {{ form.as_p }}
+  <div class="submit-row"><input type="submit" value="{{ title }}" class="default"></div>
+</form>
+{% endblock %}

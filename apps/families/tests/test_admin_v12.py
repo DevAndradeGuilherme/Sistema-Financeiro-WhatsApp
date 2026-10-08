@@ -36,12 +36,10 @@ def inline_data(family, rows):
 
 
 def test_swap_admin_in_one_operation(admin_client, family, alice, bob):
-    # Promotion listed before demotion: save order must still respect the unique ADMIN index.
-    bob_m = FamilyMember.objects.get(user=bob)
-    alice_m = FamilyMember.objects.get(user=alice)
+    # The explicit operation replaces arbitrary role edits in the old inline.
     response = admin_client.post(
-        f"/admin/families/family/{family.pk}/change/",
-        inline_data(family, [(bob_m, ADMIN), (alice_m, MEMBER)]),
+        f"/admin/families/family/{family.pk}/transfer-admin/",
+        {"user": bob.pk},
     )
     assert response.status_code == 302, response.content
     assert FamilyMember.objects.get(role=ADMIN, family=family).user == bob
@@ -55,7 +53,7 @@ def test_inline_rejects_two_admins_or_none(admin_client, family, alice, bob):
             f"/admin/families/family/{family.pk}/change/",
             inline_data(family, [(alice_m, roles[0]), (bob_m, roles[1])]),
         )
-        assert response.status_code == 200  # redisplayed with error
+        assert response.status_code == 302  # forged inline data cannot alter memberships
     assert FamilyMember.objects.get(role=ADMIN, family=family).user == alice
 
 
@@ -79,7 +77,7 @@ def test_standalone_cannot_add_member_to_family_without_admin(admin_client, fami
         "/admin/families/familymember/add/",
         {"family": orphan.pk, "user": newcomer.pk, "role": MEMBER},
     )
-    assert response.status_code == 200
+    assert response.status_code == 403
     assert not FamilyMember.objects.filter(family=orphan).exists()
 
 
@@ -89,7 +87,7 @@ def test_standalone_cannot_demote_admin(admin_client, family, alice):
         f"/admin/families/familymember/{membership.pk}/change/",
         {"family": family.pk, "user": alice.pk, "role": MEMBER},
     )
-    assert response.status_code == 200
+    assert response.status_code == 403
     membership.refresh_from_db()
     assert membership.role == ADMIN
 
@@ -100,7 +98,7 @@ def test_standalone_cannot_add_second_admin(admin_client, family, make_user):
         "/admin/families/familymember/add/",
         {"family": family.pk, "user": newcomer.pk, "role": ADMIN},
     )
-    assert response.status_code == 200
+    assert response.status_code == 403
     assert FamilyMember.objects.filter(family=family, role=ADMIN).count() == 1
 
 
@@ -111,7 +109,7 @@ def test_user_in_at_most_one_family(admin_client, family, alice, make_user):
         "/admin/families/familymember/add/",
         {"family": other.pk, "user": alice.pk, "role": MEMBER},
     )
-    assert response.status_code == 200
+    assert response.status_code == 403
     assert FamilyMember.objects.filter(user=alice).count() == 1
 
 
@@ -124,9 +122,8 @@ def test_cannot_delete_admin_while_members_remain(admin_client, family, alice, b
     changelist = admin_client.get("/admin/families/familymember/")
     assert b"delete_selected" not in changelist.content
     # A regular member can be removed.
-    bob_m = FamilyMember.objects.get(user=bob)
     response = admin_client.post(
-        f"/admin/families/familymember/{bob_m.pk}/delete/", {"post": "yes"}
+        f"/admin/families/family/{family.pk}/remove-member/", {"user": bob.pk}
     )
     assert response.status_code == 302
 

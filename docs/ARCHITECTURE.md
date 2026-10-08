@@ -211,3 +211,9 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-07 — `CATEGORY_TREND` reutiliza a semântica de períodos do `COMPARE` (mês corrente até hoje × mês anterior completo) — consistência entre consultas; limitação conhecida documentada em `DOMAIN.md`.
 - 2026-10-07 — Índice `(family, transaction_date)` em `Transaction` (migration `transactions/0003`) — leituras familiares/análises filtram pela família histórica + período.
 - 2026-10-08 — Comprovantes sem armazenamento: imagem processada só em memória e descartada; `ReceiptAttachment` vira metadados técnicos gravados após a visão, no mesmo atomic da transação; cliente Storage, `storage_check` e `SUPABASE_*` removidos (sem service role key no runtime) — `IMAGE_RETENTION = NONE`, menos dado sensível e uma credencial de alto privilégio a menos. Colunas `storage_*` mantidas como legado (NULL em novas linhas) até a limpeza manual do bucket DEV.
+- 2026-10-08 — Django Admin como interface operacional inicial de usuários, famílias e acessos,
+  sem painel próprio. Substitui a troca de papéis por inline (decisão de 2026-10-07) por operação
+  explícita de transferência, atômica e serializada pelo lock da família. Inclusão/remoção usam
+  o mesmo lock; membership isolado fica somente leitura. LogEntry participa da mesma transação.
+  Nenhum schema/dependência novo. Exclusões administrativas de User/Family são bloqueadas;
+  desativação preserva identidade e histórico. Ledger e diagnósticos permanecem somente leitura.
