@@ -53,7 +53,7 @@ Internet ──HTTPS──> Nginx ──HTTP──> Gunicorn (Django) ──SSL�
 ```
 
 - **Gunicorn**: workers síncronos; `--timeout` maior que o pior caso do pipeline síncrono
-  (somar download, transcrição/interpretação ou Storage/visão, envio Evolution e margem). Com os
+  (somar download, transcrição/interpretação ou visão, envio Evolution e margem). Com os
   valores do `.env.example`, o teto externo chega a cerca de 70 s; o default é 120 s. Número de
   workers ajustado à memória/CPU do host, considerando a imagem decodificada e sua cópia base64.
 - **Nginx**: TLS, redirect HTTP→HTTPS, `client_max_body_size` limitado, rate limit no
@@ -87,7 +87,9 @@ lá com placeholder e comentário. Agrupamentos:
   (+ modelo de transcrição na V1.3).
 - Evolution: `EVOLUTION_API_BASE_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE_NAME`,
   `EVOLUTION_WEBHOOK_SECRET`, `EVOLUTION_TIMEOUT_SECONDS`.
-- Supabase Storage (V1.4): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`.
+- Imagens: `OPENAI_VISION_MODEL`, `OPENAI_VISION_TIMEOUT_SECONDS`, `IMAGE_MAX_BYTES`,
+  `IMAGE_MAX_PIXELS`. Sem Storage: `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/
+  `SUPABASE_STORAGE_BUCKET` não são mais usadas (não configurar).
 - Domínio: `TRANSACTION_MAX_AMOUNT`.
 
 ## 7. Pendências de infraestrutura

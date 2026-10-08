@@ -195,9 +195,14 @@ o Django busca **somente nas transações ativas do remetente**, com `transactio
 
 - Imagem de comprovante gera, no máximo, uma `create_transaction` do **próprio remetente**
   (`source=IMAGE`), com as mesmas regras do texto. Nunca edita, consulta ou desfaz por imagem.
-- `ReceiptAttachment` liga a imagem armazenada (bucket privado) à mensagem e, se houver, à
-  transação. Soft delete / "desfazer" da transação **não** apaga o comprovante (evidência).
-- `RETENTION_POLICY = PENDING_PRODUCT_DECISION`: sem limpeza automática até decisão de produto.
+- Imagens de comprovante são processadas de forma efêmera, em memória, e **não são retidas**.
+  A imagem é só entrada transitória; o registro persistente é a `Transaction`.
+- `ReceiptAttachment` guarda apenas metadados técnicos da mídia processada (tipo, tamanho,
+  dimensões, SHA-256, tipo de documento, status) ligados à mensagem e, se houver, à transação.
+  Nunca conteúdo visual, OCR, CPF/CNPJ, chave Pix, dados bancários ou favorecido/pagador.
+  Soft delete / "desfazer" da transação **não** apaga esses metadados.
+- `IMAGE_RETENTION = NONE` (imagem existe só durante o processamento). Retenção de
+  `InboundMessage`, metadados, `Transaction` e auditoria segue `PENDING_PRODUCT_DECISION`.
 
 ### Auditoria
 

@@ -6,6 +6,22 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Changed — comprovantes sem armazenamento
+- Imagens de comprovante são processadas de forma efêmera, em memória, e **não são retidas**: download, validação,
+  normalização (sem EXIF/GPS) e visão acontecem em memória; nada vai para Storage, disco, banco
+  ou logs. `IMAGE_RETENTION = NONE`.
+- `ReceiptAttachment` vira metadados técnicos gravados após a visão: `PROCESSED` no mesmo atomic
+  da transação/mensagem, `FAILED` em falha de visão ou commit. `sha256` = bytes normalizados
+  enviados à visão (auditoria, não deduplica).
+- Migration `whatsapp/0005`: `storage_bucket`/`storage_path` anuláveis (legado, `NULL` em linhas
+  novas), `CHECK` aceita `NULL`; nenhuma tabela nova, nenhum dado removido.
+- Resposta de comprovante não diz mais "Comprovante guardado." (nada é guardado).
+
+### Removed
+- `common/storage.py`, `storage_check`, testes do cliente Storage e as variáveis
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`,
+  `SUPABASE_TIMEOUT_SECONDS` (a aplicação não precisa mais da service role key).
+
 ### Changed — respostas do WhatsApp
 - Registro de transação (`CREATE_TRANSACTION`) responde com card estruturado (título, valor,
   categoria, subcategoria quando existir e data sempre visível); entradas passam a se chamar

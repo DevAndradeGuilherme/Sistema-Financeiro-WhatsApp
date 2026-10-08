@@ -110,10 +110,15 @@ Essa mudança exige registro na seção 8.
 ```
 Áudio (V1.3 ✅): Evolution → download (por id, autenticado) → transcrição (1 chamada) → texto
         → READY → passo 5 em diante (mesmo pipeline; `whatsapp/audio.py`, `ai/transcription.py`)
-Imagem (V1.4 ✅): Evolution → download (por id) → normalização Pillow (sem EXIF) → Storage
-        privado → 1 chamada de visão (schema estrito) → actions.plan_receipt → pipeline.commit_plan
+Imagem (V1.4 ✅): Evolution → download (por id, em memória) → normalização Pillow (sem EXIF)
+        → SHA-256/metadados → 1 chamada de visão (schema estrito) → actions.plan_receipt
+        → pipeline.commit_plan (transação + metadados do anexo + PROCESSED no mesmo atomic)
         → mesmo transactions.services.create_transaction (`whatsapp/image.py`, `ai/vision.py`)
+        → bytes descartados
 ```
+
+Imagens de comprovante são processadas de forma efêmera, em memória, e **não são retidas**:
+nenhum Storage, arquivo temporário, bytes, base64 ou URL. Persistem só a `Transaction` e os metadados técnicos (`ReceiptAttachment`).
 
 Proibido criar regras financeiras paralelas para áudio ou imagem. O que muda é apenas
 a etapa que produz o texto/proposta.
@@ -200,8 +205,9 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-07 — Áudio aguardando transcrição permanece `RECEIVED`; rejeições de limite usam `PROCESSED` + código — sem novos estados nem migration.
 - 2026-10-07 — Imagem = transporte: `image.py` + `ai.vision` (1 chamada, `detail=high`) + `actions.plan_receipt`, gravando pelo mesmo `pipeline.commit_plan` — sem segundo domínio.
 - 2026-10-07 — Pillow (dependência nova) só para validar/normalizar e remover metadados; sem OCR local.
-- 2026-10-07 — Cliente Storage próprio com stdlib (4 chamadas REST) em vez do SDK Supabase completo; bucket privado, service role só no backend.
+- 2026-10-07 — Cliente Storage próprio com stdlib (4 chamadas REST) em vez do SDK Supabase completo; bucket privado, service role só no backend. **Substituída em 2026-10-08** (abaixo).
 - 2026-10-07 — Comprovante: registro direto quando inequívoco (sem confirmação), com "desfazer" disponível; incerteza → pede dado em texto.
 - 2026-10-07 — Análises V1.5 em `transactions/analytics.py` sobre `ReadScope` (sem selector/autorização novos), calculadas sob demanda e nunca persistidas — sem tabelas de relatório nem snapshots.
 - 2026-10-07 — `CATEGORY_TREND` reutiliza a semântica de períodos do `COMPARE` (mês corrente até hoje × mês anterior completo) — consistência entre consultas; limitação conhecida documentada em `DOMAIN.md`.
 - 2026-10-07 — Índice `(family, transaction_date)` em `Transaction` (migration `transactions/0003`) — leituras familiares/análises filtram pela família histórica + período.
+- 2026-10-08 — Comprovantes sem armazenamento: imagem processada só em memória e descartada; `ReceiptAttachment` vira metadados técnicos gravados após a visão, no mesmo atomic da transação; cliente Storage, `storage_check` e `SUPABASE_*` removidos (sem service role key no runtime) — `IMAGE_RETENTION = NONE`, menos dado sensível e uma credencial de alto privilégio a menos. Colunas `storage_*` mantidas como legado (NULL em novas linhas) até a limpeza manual do bucket DEV.

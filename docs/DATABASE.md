@@ -130,25 +130,36 @@ queryset method nomeado (`.active()`).
 | `id` | UUID | PK |
 | `inbound_message` | OneToOne InboundMessage | `PROTECT`; um anexo por mensagem (idempotência) |
 | `transaction` | FK Transaction, null | `PROTECT`; preenchida quando a transação é criada |
-| `status` | varchar | `STORED` \| `PROCESSED` \| `FAILED`; `CHECK` |
+| `status` | varchar | `PROCESSED` \| `FAILED` (`STORED` só em linhas legadas); `CHECK` |
 | `error_code`, `document_type` | varchar | códigos sanitizados / `RECEIPT`, `PAYMENT_PROOF`, ... |
-| `storage_bucket`, `storage_path` | varchar | path `UNIQUE`, `CHECK` começa com `receipts/` (opaco, sem dados pessoais) |
+| `storage_bucket`, `storage_path` | varchar, null | **legado**: `NULL` em toda linha nova; path `UNIQUE`, `CHECK` `NULL` ou começa com `receipts/` |
 | `content_type` | varchar | `image/jpeg` \| `image/png` \| `image/webp`; `CHECK` |
 | `byte_size`, `width`, `height` | int | da imagem normalizada; `byte_size > 0` |
-| `sha256` | varchar(64) | índice; diagnóstico (não bloqueia reenvio legítimo) |
+| `sha256` | varchar(64) | índice; SHA-256 dos bytes **normalizados enviados à visão**; só auditoria (não deduplica) |
 | `created_at`, `updated_at` | timestamptz | |
 
-Nunca: bytes, base64, URL (pública ou assinada), chave, payload bruto. RLS habilitado como nas
-demais tabelas.
+Gravado só depois da visão: `PROCESSED` no mesmo atomic da transação (se houver) e da mensagem,
+ou `FAILED` quando visão/commit falham. Imagens são processadas em memória e **não são retidas**
+(`IMAGE_RETENTION = NONE`). Nunca: bytes, base64, URL (pública ou assinada), path de Storage em
+linha nova, OCR, chave, payload bruto. RLS habilitado como nas demais tabelas.
 
-### Supabase Storage (V1.4)
+### Storage legado (V1.4, desativado em 2026-10-08)
 
-- Bucket **privado** (`SUPABASE_STORAGE_BUCKET`), acessado só pelo backend com a
-  `SUPABASE_SERVICE_ROLE_KEY` (que **ignora RLS**, por isso nunca sai do servidor: não vai para
-  banco, logs, OpenAI ou clientes). Nenhuma policy pública, nenhuma URL pública.
-- `python manage.py storage_check [--write-test]` confirma que o bucket existe e é privado (e
-  testa upload/consulta/remoção com objeto sintético). Nunca altera políticas.
-- `RETENTION_POLICY = PENDING_PRODUCT_DECISION`: sem expurgo automático; definir antes de produção.
+- A aplicação não usa mais Supabase Storage nem `SUPABASE_SERVICE_ROLE_KEY`; cliente Storage e
+  `storage_check` foram removidos (migration `whatsapp/0005` tornou `storage_*` anuláveis, sem
+  apagar dados).
+- O bucket privado do DEV ainda guarda os objetos enviados antes da mudança, referenciados
+  pelas linhas legadas com `storage_path`. Não há expurgo automático; limpeza manual:
+  1. No painel Supabase DEV (Storage), conferir que o bucket segue **privado** e que os objetos
+     estão sob `receipts/AAAA/MM/`.
+  2. Conferir a lista com o banco (SQL somente leitura):
+     `SELECT count(*) FROM whatsapp_receiptattachment WHERE storage_path IS NOT NULL;`
+  3. Apagar os objetos `receipts/...` pelo painel (ou o bucket inteiro, se não houver mais nada).
+  4. Opcional, depois de apagar: `UPDATE whatsapp_receiptattachment SET storage_bucket = NULL,
+     storage_path = NULL WHERE storage_path IS NOT NULL;` (metadados técnicos permanecem).
+  5. Revogar/rotacionar a service role key se ela tiver sido distribuída e removê-la do `.env`.
+  Quando nenhuma linha tiver `storage_path`, as colunas legadas podem ser removidas por migration
+  própria.
 
 ### `whatsapp.InboundMessage`
 
@@ -171,7 +182,7 @@ demais tabelas.
 | `received_at`, `updated_at`, `processed_at` | timestamptz | |
 
 Payload bruto **não** é armazenado (contém `apikey` da instância e dados pessoais).
-Mídias **não** ficam no banco (Supabase Storage, V1.4). RLS habilitado pelo mesmo
+Mídias **não** ficam no banco nem em Storage (processadas em memória). RLS habilitado pelo mesmo
 `post_migrate` das demais tabelas.
 
 Opcional/recomendado: registro da interpretação (`intent`, modelo, latência, tokens,
@@ -189,8 +200,8 @@ resultado da validação) ligado à `InboundMessage`, para auditoria e melhoria 
   (recurso padrão do PostgreSQL; o role dono das tabelas, usado pelo Django, não é afetado;
   desligável com `DB_ENABLE_RLS=False`). Recomendado também desabilitar a exposição do schema
   na Data API no painel. Ver `SECURITY.md`.
-- Chaves `anon`/`service_role` do Supabase nunca vão para cliente algum; `service_role`
-  só no servidor e só quando o Storage for usado (V1.4).
+- Chaves `anon`/`service_role` do Supabase nunca vão para cliente algum; a aplicação não usa
+  `service_role` (sem Storage desde 2026-10-08).
 - Backups: usar os backups gerenciados do Supabase; confirmar plano/retenção antes da produção.
 
 ## 4. Migrations

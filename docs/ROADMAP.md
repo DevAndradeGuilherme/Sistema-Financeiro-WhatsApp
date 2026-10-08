@@ -71,12 +71,18 @@ família gastou esse mês?" (negar) e "quanto <ADMIN> gastou esse mês?" (negar)
 ## V1.4 — Imagens
 
 - [x] Comprovantes, recibos, cupons e Pix (JPEG/PNG/WEBP/GIF estático; PDF fora do escopo).
-- [x] Armazenamento em Supabase Storage privado, sem EXIF; `ReceiptAttachment` com metadados.
+- [x] ~~Armazenamento em Supabase Storage privado~~ substituído (2026-10-08) por processamento
+  efêmero em memória, sem EXIF; `ReceiptAttachment` só com metadados técnicos.
 - [x] Extração por visão (1 chamada, schema estrito) + validação Django + `create_transaction`
   (`source=IMAGE`); registro direto quando inequívoco, "desfazer" disponível.
 - [x] Validação real (2026-10-07): recibo de despesa, Pix enviado e imagem não financeira pelo WhatsApp
   (Pix recebido validado por smoke sintético e testes).
-- RETENTION_POLICY = PENDING_PRODUCT_DECISION.
+- IMAGE_RETENTION = NONE (imagens não são retidas); demais retenções seguem pendentes.
+- IMAGE_NO_STORAGE_SMOKE_VALIDATION = COMPLETE (2026-10-08: pipeline real + OpenAI Vision real +
+  Supabase DEV revertido; recibo sintético virou EXPENSE R$ 23,45 e paisagem NOT_A_RECEIPT, ambos
+  com metadados e storage_path NULL; único host acessado: api.openai.com).
+- IMAGE_NO_STORAGE_LIVE_VALIDATION = PENDING_LIVE_VALIDATION (um comprovante real sem dados
+  sensíveis pelo WhatsApp DEV).
 
 ## V1.5 — Análises
 
@@ -99,7 +105,7 @@ Status da V1.5 (2026-10-07):
 | INTEGRATED_LOCAL_VALIDATION | COMPLETE (pipeline real + OpenAI + Supabase DEV, dados sintéticos revertidos, sem envio) |
 | V1_5_LIVE_VALIDATION | COMPLETE (8 mensagens reais do ADMIN DEV: resumo, evolução 6 meses, aumentos por categoria, % da renda, resumo/evolução da família, resumo da Maria DEV e follow-up "e mês passado?"; valores conferidos por SQL, nenhuma mutação) |
 | MEMBER_LIVE_VALIDATION | PENDING_LIVE_VALIDATION (herdado da V1.2) |
-| RETENTION_POLICY | PENDING_PRODUCT_DECISION (herdado da V1.4) |
+| RETENTION_POLICY | Imagens: `IMAGE_RETENTION = NONE` (2026-10-08). `InboundMessage`, metadados, `Transaction` e auditoria: PENDING_PRODUCT_DECISION |
 
 Limitação conhecida: `CATEGORY_TREND` sem período explícito compara o mês corrente até hoje com
 o mês anterior completo (mesma semântica do `COMPARE`); ver `DOMAIN.md §4`.

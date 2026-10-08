@@ -16,7 +16,7 @@ Revisores (Codex) devem usar este documento como checklist.
 | S7 | Logs não expõem segredos nem dados financeiros completos | redaction em `common` |
 | S8 | Soft delete onde o domínio define | `deleted_at`; selectors filtram |
 | S9 | Toda entrada externa é não confiável | payload Evolution, saída da IA, mídias, Admin inputs |
-| S10 | Dados financeiros e mídias são sensíveis | acesso mínimo, buckets privados, retenção definida |
+| S10 | Dados financeiros e mídias são sensíveis | acesso mínimo, mídia não retida (`IMAGE_RETENTION = NONE`), retenção definida |
 
 ## 2. Identidade e autorização
 
@@ -71,9 +71,9 @@ Revisores (Codex) devem usar este documento como checklist.
 
 - Desabilitar exposição do schema da aplicação na Data API (PostgREST) e/ou habilitar RLS
   sem policies em todas as tabelas. Nenhum acesso a dados pelo client-side do Supabase.
-- `service_role` key só no servidor, só quando necessária (Storage, V1.4).
-- Buckets de mídia **privados**; acesso via URLs assinadas de curta duração, geradas
-  somente após autorização no Django.
+- A aplicação **não usa** a `service_role` key (nem Storage) desde 2026-10-08: mídias não são
+  armazenadas. Não configurá-la no runtime; se algum dia for necessária, só no servidor.
+- Bucket legado de comprovantes (DEV) permanece privado até a limpeza manual (`DATABASE.md`).
 - Conexão com o banco via SSL.
 
 ## 7. Webhook e rede
@@ -87,7 +87,7 @@ chamadas à Evolution sempre com timeout.
 - HTTPS obrigatório (Nginx com TLS).
 - Limite de tamanho de corpo no Nginx e no Django.
 - Rate limiting básico no Nginx para o endpoint de webhook.
-- Timeouts em todas as chamadas de saída (OpenAI, Evolution, Supabase).
+- Timeouts em todas as chamadas de saída (OpenAI, Evolution).
 
 ## 7.1 Áudio (V1.3)
 
@@ -100,19 +100,22 @@ chamadas à Evolution sempre com timeout.
 
 ## 7.2 Imagens / comprovantes (V1.4)
 
+- Imagens de comprovante são processadas de forma efêmera, em memória, e **não são retidas**:
+  sem Storage, arquivo temporário, bytes, base64, data URL, OCR/texto do comprovante, URL ou path persistidos.
+  `IMAGE_RETENTION = NONE`.
 - Formato pelos bytes + Pillow; limite de bytes (`IMAGE_MAX_BYTES`) e de pixels
   (`IMAGE_MAX_PIXELS`, checado no cabeçalho antes de decodificar; bomba de descompressão vira erro).
-- EXIF/GPS e metadados de texto removidos na regravação **antes** do Storage e da OpenAI.
-- Bucket privado; `SUPABASE_SERVICE_ROLE_KEY` só no backend (ignora RLS); paths opacos
-  (`receipts/AAAA/MM/<uuid>.<ext>`); sem URL pública ou assinada persistida; Admin só metadados.
+- EXIF/GPS e metadados de texto removidos na regravação; a OpenAI recebe **somente** a versão
+  normalizada (nunca os bytes originais), `store=False`.
+- `ReceiptAttachment`: só metadados técnicos; Admin read-only, sem visualização de imagem.
 - Logs técnicos apenas (id, bytes, formato, dimensões, modelo, tokens, códigos) — nunca imagem,
   base64, valores, descrição, CPF/CNPJ, chave Pix ou telefone.
-- Comprovante não é apagado por soft delete/undo; `RETENTION_POLICY = PENDING_PRODUCT_DECISION`.
 
 ## 8. Dados
 
 - Soft delete para transações; exclusão física apenas por processo administrativo documentado.
-- Retenção de payload bruto e mídias deve ser definida antes de armazená-los.
+- Retenção de payload bruto e mídias deve ser definida antes de armazená-los (hoje nenhum
+  dos dois é armazenado). Retenção de `InboundMessage`, metadados e auditoria: pendente.
 - Dumps de banco nunca no repositório nem em máquinas sem criptografia.
 
 ## 9. Checklist de revisão de segurança
@@ -123,7 +126,7 @@ chamadas à Evolution sempre com timeout.
 - [ ] Alguma mutação sem registro em `TransactionChange` ou fora do `atomic` da mensagem?
 - [ ] Alguma leitura de terceiro sem passar por `transactions.scopes` (ex.: filtro por `user_id` vindo de fora)?
 - [ ] Alguma URL/caminho/nome de arquivo vindo de webhook usado para baixar ou gravar mídia?
-- [ ] Bucket ainda privado (`storage_check`)? Alguma URL pública/assinada persistida ou logada?
+- [ ] Alguma mídia (bytes/base64/arquivo/URL) persistida ou logada? (não pode)
 - [ ] Idempotência garantida por constraint, não só por `if exists`?
 - [ ] Algum `float` em dinheiro?
 - [ ] Algum segredo, telefone completo ou payload bruto em log?

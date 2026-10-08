@@ -59,7 +59,6 @@ RECEIPT_DATE_UNREADABLE = "Não consegui ler a data desse comprovante com segura
 IMAGE_TOO_LARGE = "Essa imagem é muito grande. Pode mandar uma foto ou print menor?"
 IMAGE_INVALID = "Não consegui abrir essa imagem. Pode mandar uma foto ou print em JPG ou PNG?"
 IMAGE_DOWNLOAD_FAILED = "Não consegui processar essa imagem. Tente enviar novamente."
-RECEIPT_STORED_SUFFIX = "\n\nComprovante guardado."
 ADMIN_ONLY = "Essa consulta está disponível apenas para o administrador da família."
 NO_FAMILY = "Você ainda não faz parte de uma família cadastrada."
 MEMBER_NOT_FOUND = "Não encontrei essa pessoa na sua família."

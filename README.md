@@ -23,7 +23,7 @@ IA interpreta.  Django valida e autoriza.  PostgreSQL calcula e persiste.  Whats
 |---|---|
 | Aplicação | Python, Django (monólito modular) |
 | Banco | PostgreSQL gerenciado pelo Supabase |
-| Mídias | Supabase Storage privado |
+| Mídias | processadas em memória e descartadas (nada armazenado) |
 | Canal | WhatsApp via Evolution API |
 | Interpretação | OpenAI (respostas estruturadas) |
 | Execução | Docker, Gunicorn, Nginx |

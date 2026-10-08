@@ -99,9 +99,11 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   UPDATE/UNDO, família, contexto texto↔áudio, filtros antes do download, idempotência,
   concorrência, falhas, limites, privacidade). Download/transcrição mockados na fronteira.
 - V1.4: `common/tests/test_images.py` (formatos, falsificação, corrupção, limites, bomba,
-  animação, EXIF/GPS), `common/tests/test_storage.py`, `apps/ai/tests/test_vision.py` e
-  `apps/whatsapp/tests/test_image.py` (pipeline real com Pillow e domínio; Evolution, Storage e
-  visão mockados nos clients; idempotência, concorrência, falhas, privacidade).
+  animação, EXIF/GPS), `apps/ai/tests/test_vision.py` e `apps/whatsapp/tests/test_image.py`
+  (pipeline real com Pillow e domínio; Evolution e visão mockados nos clients; qualquer outro
+  acesso de rede — ex. Storage — falha o teste; `storage_path` NULL, sem `SUPABASE_*`/service
+  role, hash dos bytes normalizados, sem bytes/base64 no banco, idempotência, concorrência,
+  falhas de visão/commit/anexo, privacidade).
 - V1.5: `apps/transactions/tests/test_analytics.py` (resumo, evolução mensal, variação por
   categoria, percentuais `Decimal`, receitas = 0, saldo negativo, >100%, soft delete, edição,
   escopos FAMILY/FAMILY_MEMBER, agregação no banco) e `apps/whatsapp/tests/test_pipeline_v15.py`
@@ -117,8 +119,8 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   + OpenAI real + Supabase DEV com usuários/família/lançamentos sintéticos, Evolution
   substituída por captura em memória e tudo dentro de um `transaction.atomic()` revertido ao
   final (nada persiste, nada é enviado). Não substitui a validação ao vivo pelo WhatsApp.
-- Smokes V1.4: `storage_check --write-test` (objeto sintético removido ao final) e comprovantes
-  sintéticos gerados em memória; nunca versionar imagens.
+- Smokes de imagem: comprovantes sintéticos gerados em memória (sem dado pessoal); nunca
+  versionar imagens. Não há mais smoke de Storage.
 - Smoke de transcrição: fixture sintética gerada por TTS fora do repositório (nunca versionar
   áudio, muito menos voz pessoal).
 - Smoke test real (manual, fora da suíte): chamar `apps.ai.service.interpret_message` com o

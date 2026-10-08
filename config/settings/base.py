@@ -174,15 +174,11 @@ OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS = env("OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS
 AUDIO_MAX_BYTES = int(env("AUDIO_MAX_BYTES", str(10 * 1024 * 1024)))  # API limit is 25 MB
 AUDIO_MAX_SECONDS = int(env("AUDIO_MAX_SECONDS", "300"))  # financial messages, not meetings
 
-# Receipt images (V1.4): one vision call per image; stored in a PRIVATE Supabase bucket.
+# Receipt images: one vision call per image; processed in memory and never stored.
 OPENAI_VISION_MODEL = env("OPENAI_VISION_MODEL")
 OPENAI_VISION_TIMEOUT_SECONDS = env("OPENAI_VISION_TIMEOUT_SECONDS")
 IMAGE_MAX_BYTES = int(env("IMAGE_MAX_BYTES", str(10 * 1024 * 1024)))
 IMAGE_MAX_PIXELS = int(env("IMAGE_MAX_PIXELS", str(40_000_000)))  # decompression-bomb guard
-SUPABASE_URL = env("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = env("SUPABASE_SERVICE_ROLE_KEY")  # backend only; bypasses RLS
-SUPABASE_STORAGE_BUCKET = env("SUPABASE_STORAGE_BUCKET")
-SUPABASE_TIMEOUT_SECONDS = env("SUPABASE_TIMEOUT_SECONDS", "20")
 
 # Follow-up queries ("e mês passado?") reuse the last query for this long.
 CONVERSATION_CONTEXT_TTL_MINUTES = int(env("CONVERSATION_CONTEXT_TTL_MINUTES", "20"))

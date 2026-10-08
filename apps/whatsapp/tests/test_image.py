@@ -1,20 +1,26 @@
-"""V1.4: receipt image → download → normalize → private Storage → vision → domain.
+"""Receipt image → download → normalize in memory → vision → domain. Nothing is stored.
 
-Mocked boundaries: Evolution download (``image.EvolutionClient``), Storage
-(``image.StorageClient``), vision (``image.extract_receipt``) and the reply
-(``pipeline.EvolutionClient``). Image validation (Pillow), Django rules, the financial domain,
-idempotency and the database are real.
+Mocked boundaries: Evolution download (``image.EvolutionClient``), vision
+(``image.extract_receipt``) and the reply (``pipeline.EvolutionClient``). Image validation
+(Pillow), Django rules, the financial domain, idempotency and the database are real. Any other
+network access (e.g. a Storage upload) fails the test: sockets are blocked.
 """
 
+import base64
+import hashlib
+import importlib.util
 import io
 import json
+import socket
 import threading
 from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
 
 import pytest
+from django.conf import settings
 from django.db import IntegrityError, connections
+from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
 
@@ -28,7 +34,6 @@ from apps.whatsapp.models import InboundMessage, ReceiptAttachment
 from apps.whatsapp.parsers import parse_evolution_event
 from apps.whatsapp.services import receive_message
 from common.dates import today_local
-from common.storage import StorageError
 
 from . import payloads, replies
 from .test_pipeline import deliver, interp
@@ -104,11 +109,17 @@ def download():
         yield cls.return_value.download_image
 
 
-@pytest.fixture
-def storage():
-    with mock.patch("apps.whatsapp.image.StorageClient") as cls:
-        cls.return_value.config.bucket = "test-receipts"
-        yield cls.return_value
+@pytest.fixture(autouse=True)
+def no_network():
+    """Only the mocked boundaries may "talk": any real socket (Storage, CDN...) is a failure."""
+    blocked = AssertionError("unexpected network access")
+    with (
+        mock.patch.object(socket, "create_connection", side_effect=blocked) as create,
+        mock.patch.object(socket.socket, "connect", side_effect=blocked) as connect,
+    ):
+        yield
+    create.assert_not_called()
+    connect.assert_not_called()
 
 
 @pytest.fixture
@@ -131,17 +142,16 @@ def reply(evolution):
 
 
 def test_expense_receipt_creates_transaction_and_links_attachment(
-    client, alice, catalog, evolution, download, storage, vision
+    client, alice, catalog, evolution, download, vision
 ):
     record = post_image(client)
 
     download.assert_called_once_with("IMG1", max_bytes=1024 * 1024)
-    storage.upload.assert_called_once()
-    path, data, content_type = storage.upload.call_args.args
     vision.assert_called_once()
-    assert vision.call_args.args[0] == data  # same normalized bytes stored and analysed
-    assert content_type == "image/jpeg"
-    assert b"PhoneCam" not in data and b"GPS" not in data  # EXIF/GPS removed before Storage
+    data = vision.call_args.args[0]
+    assert data != JPEG  # never the original bytes
+    assert vision.call_args.kwargs["content_type"] == "image/jpeg"
+    assert b"PhoneCam" not in data and b"GPS" not in data  # EXIF/GPS removed before vision
 
     txn = Transaction.objects.get()
     assert (txn.user, txn.type, txn.amount, txn.category, txn.source) == (
@@ -157,9 +167,11 @@ def test_expense_receipt_creates_transaction_and_links_attachment(
         txn,
         AStatus.PROCESSED,
     )
-    assert attachment.storage_path == path
+    assert (attachment.storage_bucket, attachment.storage_path) == (None, None)  # not stored
     assert attachment.document_type == "RECEIPT"
     assert (attachment.width, attachment.height, attachment.byte_size) == (400, 600, len(data))
+    assert attachment.content_type == "image/jpeg"
+    assert attachment.sha256 == hashlib.sha256(data).hexdigest()  # normalized bytes sent to vision
     record.refresh_from_db()
     assert (record.status, record.transaction, record.intent) == (
         Status.PROCESSED,
@@ -168,20 +180,18 @@ def test_expense_receipt_creates_transaction_and_links_attachment(
     )
     text = reply(evolution)
     assert replies.card(text) == replies.expense("47,90", "Alimentação", txn.transaction_date)
-    assert text.endswith(messages.RECEIPT_STORED_SUFFIX)
+    assert "guardado" not in text and "armazenado" not in text  # nothing is kept
 
 
-def test_storage_path_is_opaque(client, alice, evolution, download, storage, vision):
-    post_image(client)
-    path = storage.upload.call_args.args[0]
-    import re
-
-    assert re.fullmatch(r"receipts/\d{4}/\d{2}/[0-9a-f]{32}\.jpg", path)
-    for private in ("alice", "5531999990001", "joao", "cpf", "mercado"):
-        assert private not in path
+def test_storage_is_gone_and_service_role_not_needed(client, alice, evolution, download, vision):
+    assert importlib.util.find_spec("common.storage") is None
+    for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_STORAGE_BUCKET"):
+        assert not hasattr(settings, name)
+    post_image(client)  # works end to end without any Storage configuration
+    assert Transaction.objects.count() == ReceiptAttachment.objects.count() == 1
 
 
-def test_pix_received_creates_income(client, alice, catalog, evolution, download, storage, vision):
+def test_pix_received_creates_income(client, alice, catalog, evolution, download, vision):
     vision.extract(
         document_type="PAYMENT_PROOF",
         transaction_type="INCOME",
@@ -197,17 +207,64 @@ def test_pix_received_creates_income(client, alice, catalog, evolution, download
     )  # fallback by flag
     fields = replies.card(reply(evolution))
     assert (fields["title"], fields["Valor"]) == ("✅ Receita registrada", "R$ 150,00")
+    attachment = ReceiptAttachment.objects.get()
+    assert (attachment.document_type, attachment.transaction, attachment.storage_path) == (
+        "PAYMENT_PROOF",
+        txn,
+        None,
+    )
 
 
-def test_pix_paid_creates_expense(client, alice, catalog, evolution, download, storage, vision):
+def test_pix_paid_creates_expense(client, alice, catalog, evolution, download, vision):
     vision.extract(document_type="PAYMENT_PROOF", transaction_type="EXPENSE", amount="80.00")
     post_image(client)
-    assert Transaction.objects.get().type == "EXPENSE"
+    txn = Transaction.objects.get()
+    assert (txn.type, txn.amount, txn.source) == ("EXPENSE", Decimal("80.00"), "IMAGE")
+    assert ReceiptAttachment.objects.get().transaction == txn
 
 
-def test_missing_printed_date_uses_message_date(
-    client, alice, evolution, download, storage, vision
-):
+def test_ambiguous_pix_creates_nothing_and_asks(client, alice, evolution, download, vision):
+    vision.extract(document_type="PAYMENT_PROOF", transaction_type="UNKNOWN", amount="80.00")
+    record = post_image(client)
+    record.refresh_from_db()
+    assert (record.status, record.error_code) == (Status.PROCESSED, "DIRECTION_UNCLEAR")
+    assert not Transaction.objects.exists()
+    attachment = ReceiptAttachment.objects.get()
+    assert (attachment.status, attachment.transaction, attachment.storage_path) == (
+        AStatus.PROCESSED,
+        None,
+        None,
+    )
+    assert reply(evolution) == messages.RECEIPT_DIRECTION_UNCLEAR
+
+
+def test_non_financial_image_keeps_only_metadata(client, alice, evolution, download, vision):
+    vision.extract(
+        is_financial_document=False,
+        document_type="OTHER",
+        transaction_type="UNKNOWN",
+        amount=None,
+        currency="UNKNOWN",
+    )
+    record = post_image(client)
+    record.refresh_from_db()
+    assert (record.status, record.error_code, record.transaction) == (
+        Status.PROCESSED,
+        "NOT_A_RECEIPT",
+        None,
+    )
+    assert not Transaction.objects.exists()
+    attachment = ReceiptAttachment.objects.get()
+    assert (attachment.status, attachment.document_type, attachment.error_code) == (
+        AStatus.PROCESSED,
+        "OTHER",
+        "NOT_A_RECEIPT",
+    )
+    assert (attachment.storage_bucket, attachment.storage_path) == (None, None)
+    assert len(attachment.sha256) == 64 and attachment.byte_size > 0
+
+
+def test_missing_printed_date_uses_message_date(client, alice, evolution, download, vision):
     vision.extract(transaction_date=None)
     record = post_image(client)
     # The fixture's messageTimestamp is 2026-10-07T00:00Z = 2026-10-06 21:00 in São Paulo:
@@ -218,7 +275,7 @@ def test_missing_printed_date_uses_message_date(
 
 
 def test_undo_by_text_soft_deletes_but_keeps_receipt(
-    client, alice, catalog, ai, evolution, download, storage, vision
+    client, alice, catalog, ai, evolution, download, vision
 ):
     post_image(client)
     ai.set(interp(intent="UNDO_TRANSACTION"))
@@ -226,8 +283,7 @@ def test_undo_by_text_soft_deletes_but_keeps_receipt(
     txn = Transaction.objects.get()
     assert txn.deleted_at is not None
     attachment = ReceiptAttachment.objects.get()
-    assert attachment.transaction == txn  # evidence kept, still linked
-    storage.delete.assert_not_called()
+    assert attachment.transaction == txn  # metadata kept, still linked
 
 
 # --- No financial effect ---------------------------------------------------------------------
@@ -275,7 +331,7 @@ def test_undo_by_text_soft_deletes_but_keeps_receipt(
     ],
 )
 def test_receipts_without_safe_proposal_create_nothing(
-    client, alice, evolution, download, storage, vision, overrides, code, message
+    client, alice, evolution, download, vision, overrides, code, message
 ):
     vision.extract(**overrides)
     record = post_image(client)
@@ -292,7 +348,7 @@ def test_receipts_without_safe_proposal_create_nothing(
         assert reply(evolution) == message
 
 
-def test_future_date_rejected(client, alice, evolution, download, storage, vision):
+def test_future_date_rejected(client, alice, evolution, download, vision):
     vision.extract(transaction_date=(today_local() + timedelta(days=3)).isoformat())
     record = post_image(client)
     record.refresh_from_db()
@@ -301,7 +357,7 @@ def test_future_date_rejected(client, alice, evolution, download, storage, visio
 
 
 def test_invalid_category_falls_back_but_incompatible_subcategory_is_dropped(
-    client, alice, catalog, evolution, download, storage, vision
+    client, alice, catalog, evolution, download, vision
 ):
     vision.extract(category_id=999999, subcategory_id=catalog["combustivel"].pk)
     post_image(client)
@@ -331,13 +387,10 @@ def test_invalid_category_falls_back_but_incompatible_subcategory_is_dropped(
         ({"remote_jid": "5521911112222@s.whatsapp.net"}, "UNKNOWN_SENDER"),
     ],
 )
-def test_ignored_images_are_never_downloaded(
-    client, alice, download, storage, vision, kwargs, reason
-):
+def test_ignored_images_are_never_downloaded(client, alice, download, vision, kwargs, reason):
     record = post_image(client, **kwargs)
     assert (record.status, record.ignore_reason) == (Status.IGNORED, reason)
     download.assert_not_called()
-    storage.upload.assert_not_called()
     vision.assert_not_called()
 
 
@@ -345,7 +398,7 @@ def test_ignored_images_are_never_downloaded(
 
 
 def test_declared_size_above_limit_rejected_before_download(
-    client, alice, evolution, download, storage, vision
+    client, alice, evolution, download, vision
 ):
     record = post_image(client, file_length=5 * 1024 * 1024)
     record.refresh_from_db()
@@ -354,12 +407,33 @@ def test_declared_size_above_limit_rejected_before_download(
     assert reply(evolution) == messages.IMAGE_TOO_LARGE
 
 
-def test_actual_size_above_limit(client, alice, evolution, download, storage, vision):
+def test_actual_size_above_limit(client, alice, evolution, download, vision):
     download.side_effect = MediaTooLargeError("big")
     record = post_image(client)
     record.refresh_from_db()
     assert record.error_code == "IMAGE_TOO_LARGE"
-    storage.upload.assert_not_called()
+    vision.assert_not_called()
+    assert not ReceiptAttachment.objects.exists()
+
+
+def test_decompression_bomb_rejected_before_vision(client, alice, evolution, download, vision):
+    buffer = io.BytesIO()
+    Image.new("L", (3000, 3000), 255).save(buffer, "PNG")  # tiny file, 9 Mpx > 4 Mpx limit
+    download.return_value = DownloadedMedia(buffer.getvalue(), "image/png")
+    record = post_image(client)
+    record.refresh_from_db()
+    assert (record.status, record.error_code) == (Status.PROCESSED, "IMAGE_TOO_MANY_PIXELS")
+    vision.assert_not_called()
+    assert not ReceiptAttachment.objects.exists()
+    assert not Transaction.objects.exists()
+
+
+@override_settings(IMAGE_MAX_PIXELS=100_000)
+def test_pixel_limit_comes_from_settings(client, alice, evolution, download, vision):
+    record = post_image(client)  # 400x600 = 240 000 px
+    record.refresh_from_db()
+    assert record.error_code == "IMAGE_TOO_MANY_PIXELS"
+    vision.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -371,13 +445,12 @@ def test_actual_size_above_limit(client, alice, evolution, download, storage, vi
     ],
 )
 def test_invalid_image_never_stored_nor_analysed(
-    client, alice, evolution, download, storage, vision, data, code, caplog
+    client, alice, evolution, download, vision, data, code, caplog
 ):
     download.return_value = DownloadedMedia(data, "image/jpeg")
     record = post_image(client)
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.PROCESSED, code)
-    storage.upload.assert_not_called()
     vision.assert_not_called()
     assert not ReceiptAttachment.objects.exists()
     assert "media.rejected" in caplog.text
@@ -387,35 +460,22 @@ def test_invalid_image_never_stored_nor_analysed(
 # --- Failures ------------------------------------------------------------------------------------
 
 
-def test_download_failure(client, alice, evolution, download, storage, vision):
+def test_download_failure(client, alice, evolution, download, vision):
     download.side_effect = EvolutionHTTPError(400, "Message not found")
     record = post_image(client)
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.FAILED, "IMAGE_DOWNLOAD_FAILED")
-    storage.upload.assert_not_called()
-    assert reply(evolution) == messages.IMAGE_DOWNLOAD_FAILED
-
-
-@pytest.mark.parametrize(
-    "code", ["TIMEOUT", "AUTH", "NOT_FOUND", "CONFLICT", "PROVIDER_ERROR", "REJECTED"]
-)
-def test_storage_failure_stops_before_vision(
-    client, alice, evolution, download, storage, vision, code
-):
-    storage.upload.side_effect = StorageError(code)
-    record = post_image(client)
-    record.refresh_from_db()
-    assert (record.status, record.error_code) == (Status.FAILED, f"STORAGE_{code}")
     vision.assert_not_called()
     assert not ReceiptAttachment.objects.exists()
     assert not Transaction.objects.exists()
+    assert reply(evolution) == messages.IMAGE_DOWNLOAD_FAILED
 
 
 @pytest.mark.parametrize(
     "code", ["TIMEOUT", "RATE_LIMIT", "PROVIDER_ERROR", "INVALID_OUTPUT", "REFUSAL", "AUTH"]
 )
-def test_vision_failure_keeps_evidence_and_creates_nothing(
-    client, alice, evolution, download, storage, vision, code
+def test_vision_failure_records_metadata_and_creates_nothing(
+    client, alice, evolution, download, vision, code
 ):
     vision.side_effect = AIError(code)
     record = post_image(client)
@@ -427,11 +487,12 @@ def test_vision_failure_keeps_evidence_and_creates_nothing(
         f"VISION_{code}",
         None,
     )
-    storage.delete.assert_not_called()  # evidence is not deleted
+    assert attachment.storage_path is None
     assert not Transaction.objects.exists()
+    assert reply(evolution) == messages.TECHNICAL_ERROR
 
 
-def test_failure_while_committing_rolls_back(client, alice, evolution, download, storage, vision):
+def test_failure_while_committing_rolls_back(client, alice, evolution, download, vision):
     original_save = InboundMessage.save
 
     def failing_save(self, *args, **kwargs):
@@ -442,13 +503,14 @@ def test_failure_while_committing_rolls_back(client, alice, evolution, download,
     with mock.patch.object(InboundMessage, "save", failing_save):
         record = post_image(client)
     record.refresh_from_db()
-    assert record.status == Status.FAILED
+    assert (record.status, record.error_code) == (Status.FAILED, "IMAGE_PIPELINE_ERROR")
     assert not Transaction.objects.exists()
-    assert ReceiptAttachment.objects.get().status == AStatus.FAILED
+    attachment = ReceiptAttachment.objects.get()  # diagnosis row written after the rollback
+    assert (attachment.status, attachment.error_code) == (AStatus.FAILED, "PIPELINE_ERROR")
 
 
-def test_attachment_persistence_failure_cleans_storage_and_terminates_message(
-    client, alice, evolution, download, storage, vision
+def test_attachment_persistence_failure_rolls_back_and_terminates_message(
+    client, alice, evolution, download, vision
 ):
     with mock.patch(
         "apps.whatsapp.image.ReceiptAttachment.objects.create",
@@ -457,31 +519,52 @@ def test_attachment_persistence_failure_cleans_storage_and_terminates_message(
         record = post_image(client)
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.FAILED, "IMAGE_ATTACHMENT_FAILED")
-    storage.delete.assert_called_once()
-    vision.assert_not_called()
-    assert not Transaction.objects.exists()
+    vision.assert_called_once()
+    assert not Transaction.objects.exists()  # rolled back with the attachment
+    assert not ReceiptAttachment.objects.exists()
+    assert reply(evolution) == messages.TECHNICAL_ERROR
+
+
+def test_failure_row_not_writable_still_fails_message(client, alice, evolution, download, vision):
+    vision.side_effect = AIError("TIMEOUT")
+    with mock.patch(
+        "apps.whatsapp.image.ReceiptAttachment.objects.create",
+        side_effect=IntegrityError,
+    ):
+        record = post_image(client)
+    record.refresh_from_db()
+    assert (record.status, record.error_code) == (Status.FAILED, "VISION_TIMEOUT")
+    assert not ReceiptAttachment.objects.exists()
 
 
 # --- Idempotency ---------------------------------------------------------------------------------
 
 
-def test_duplicate_delivery_one_upload_one_vision_one_transaction(
-    client, alice, evolution, download, storage, vision
+def test_duplicate_delivery_one_download_one_vision_one_transaction(
+    client, alice, evolution, download, vision
 ):
     post_image(client)
     post_image(client)
-    assert download.call_count == storage.upload.call_count == vision.call_count == 1
+    assert download.call_count == vision.call_count == 1
     assert Transaction.objects.count() == ReceiptAttachment.objects.count() == 1
 
 
-def test_reply_failure_does_not_recreate(client, alice, evolution, download, storage, vision):
+def test_same_image_in_new_message_is_a_new_receipt(client, alice, evolution, download, vision):
+    post_image(client, message_id="IMG1")
+    post_image(client, message_id="IMG2")  # same bytes, new message: legitimate
+    assert Transaction.objects.count() == ReceiptAttachment.objects.count() == 2
+    hashes = set(ReceiptAttachment.objects.values_list("sha256", flat=True))
+    assert len(hashes) == 1  # the hash audits, it does not deduplicate
+
+
+def test_reply_failure_does_not_recreate(client, alice, evolution, download, vision):
     evolution.side_effect = EvolutionHTTPError(500, "down")
     record = post_image(client)
     post_image(client)
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.PROCESSED, "REPLY_SEND_FAILED")
-    assert Transaction.objects.count() == 1
-    assert storage.upload.call_count == 1
+    assert Transaction.objects.count() == ReceiptAttachment.objects.count() == 1
+    assert download.call_count == vision.call_count == 1
 
 
 @pytest.mark.django_db(transaction=True)
@@ -509,9 +592,7 @@ def test_concurrent_duplicate_image_reserved_once(make_user):
     assert sorted(r.needs_image_processing for r in results) == [False, True]
 
 
-def test_attachment_one_per_message_at_database_level(
-    client, alice, evolution, download, storage, vision
-):
+def test_attachment_one_per_message_at_database_level(client, alice, evolution, download, vision):
     from django.db import IntegrityError
 
     record = post_image(client)
@@ -519,8 +600,7 @@ def test_attachment_one_per_message_at_database_level(
     with pytest.raises(IntegrityError):
         ReceiptAttachment.objects.create(
             inbound_message=record,
-            storage_bucket="b",
-            storage_path="receipts/other.jpg",
+            status=AStatus.PROCESSED,
             content_type="image/jpeg",
             byte_size=1,
             sha256="0" * 64,
@@ -530,11 +610,40 @@ def test_attachment_one_per_message_at_database_level(
     assert attachment.pk
 
 
+def test_legacy_storage_columns_stay_valid_and_opaque(alice):
+    """Rows from the Storage era keep their path; a non-opaque path is still refused."""
+    legacy = {
+        "status": AStatus.PROCESSED,
+        "content_type": "image/jpeg",
+        "byte_size": 1,
+        "sha256": "0" * 64,
+        "width": 32,
+        "height": 32,
+    }
+
+    def message(message_id):
+        return InboundMessage.objects.create(
+            instance="test-instance", provider_message_id=message_id, message_type="IMAGE"
+        )
+
+    old = ReceiptAttachment.objects.create(
+        inbound_message=message("OLD"),
+        storage_bucket="receipts-bucket",
+        storage_path="receipts/2026/10/" + "a" * 32 + ".jpg",
+        **legacy,
+    )
+    assert old.storage_path.startswith("receipts/")
+    with pytest.raises(IntegrityError):
+        ReceiptAttachment.objects.create(
+            inbound_message=message("BAD"), storage_path="joao-cpf.jpg", **legacy
+        )
+
+
 # --- Privacy ------------------------------------------------------------------------------
 
 
 def test_no_bytes_base64_or_urls_persisted_or_logged(
-    client, alice, evolution, download, storage, vision, caplog
+    client, alice, evolution, download, vision, caplog
 ):
     caplog.set_level("INFO")
     vision.extract(description="mercado segredo")
@@ -546,16 +655,17 @@ def test_no_bytes_base64_or_urls_persisted_or_logged(
         ],
         default=str,
     )
-    for forbidden in ("attacker", "joao-cpf", "/9j/", "base64", "http", "PhoneCam"):
+    image_b64 = base64.b64encode(vision.call_args.args[0]).decode()[:40]
+    for forbidden in ("attacker", "joao-cpf", "/9j/", "base64", "http", "PhoneCam", image_b64):
         assert forbidden not in rows
-    for forbidden in ("segredo", "/9j/", "test-supabase-secret", "47.90", "5531999990001"):
+    for forbidden in ("receipts/", "data:image", "segredo"):  # no path, data URL or OCR text
+        assert forbidden not in rows
+    for forbidden in ("segredo", "/9j/", image_b64, "47.90", "5531999990001"):
         assert forbidden not in caplog.text
     assert "image.validated" in caplog.text
 
 
-def test_family_policies_unchanged_for_images(
-    client, alice, maria, evolution, download, storage, vision
-):
+def test_family_policies_unchanged_for_images(client, alice, maria, evolution, download, vision):
     """An image always creates for the sender; there is no way to target someone else."""
     post_image(client, remote_jid="5521988887777@s.whatsapp.net")  # sent by maria
     assert Transaction.objects.get().user == maria

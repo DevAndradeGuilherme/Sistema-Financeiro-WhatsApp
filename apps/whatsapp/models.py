@@ -137,19 +137,22 @@ class ConversationContext(models.Model):
 
 
 class ReceiptAttachment(models.Model):
-    """Receipt/proof image received by WhatsApp and stored in the PRIVATE Supabase bucket.
+    """Technical metadata of a receipt/proof image received by WhatsApp.
 
-    Only metadata lives here: no bytes, no base64, no URL. ``storage_path`` is opaque
-    (``receipts/YYYY/MM/<uuid>.<ext>``) and never contains names, phones or file names.
-    One attachment per inbound message (one-to-one). Soft-deleting/undoing the transaction
-    keeps the attachment and the stored file (evidence); retention is a pending product
-    decision (see docs/DATABASE.md).
+    The image itself is processed ephemerally in memory and never retained (no bytes, no
+    base64, no file, no URL, no OCR text). One row per inbound message (one-to-one), written
+    only after the vision call: PROCESSED in the same atomic commit as the transaction (if any),
+    or FAILED when vision/commit failed. ``sha256`` is the hash of the normalized bytes sent to
+    the vision model, for technical audit only (never used for deduplication).
+
+    ``storage_bucket``/``storage_path`` and status STORED are LEGACY: only rows created before
+    images stopped being stored (V1.4 Storage era) have them; new rows always keep them NULL.
     """
 
     class Status(models.TextChoices):
-        STORED = "STORED", "Armazenado"  # uploaded; extraction pending or in progress
+        STORED = "STORED", "Armazenado (legado)"  # legacy: uploaded, extraction pending
         PROCESSED = "PROCESSED", "Processado"  # extraction answered (with or without a transaction)
-        FAILED = "FAILED", "Falhou"  # extraction failed after upload; file kept
+        FAILED = "FAILED", "Falhou"  # vision or commit failed; no transaction
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     inbound_message = models.OneToOneField(
@@ -166,11 +169,17 @@ class ReceiptAttachment(models.Model):
         related_name="receipts",
         verbose_name="transação",
     )
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.STORED)
+    status = models.CharField(max_length=10, choices=Status.choices)
     error_code = models.CharField("código de erro", max_length=50, blank=True)
     document_type = models.CharField("tipo de documento", max_length=20, blank=True)
-    storage_bucket = models.CharField("bucket", max_length=100)
-    storage_path = models.CharField("caminho", max_length=255, unique=True)
+    # Legacy (images are no longer stored): NULL for every new row. NULL (not "") on purpose:
+    # "never stored" must be unambiguous and the path keeps its UNIQUE constraint.
+    storage_bucket = models.CharField(  # noqa: DJ001
+        "bucket (legado)", max_length=100, null=True, blank=True
+    )
+    storage_path = models.CharField(
+        "caminho (legado)", max_length=255, unique=True, null=True, blank=True
+    )
     content_type = models.CharField("tipo", max_length=30)
     byte_size = models.PositiveIntegerField("bytes")
     sha256 = models.CharField(max_length=64, db_index=True)
@@ -193,7 +202,8 @@ class ReceiptAttachment(models.Model):
                 name="receipt_content_type_valid",
             ),
             models.CheckConstraint(
-                condition=models.Q(storage_path__startswith="receipts/"),
+                condition=models.Q(storage_path__isnull=True)
+                | models.Q(storage_path__startswith="receipts/"),
                 name="receipt_storage_path_opaque",
             ),
             models.CheckConstraint(

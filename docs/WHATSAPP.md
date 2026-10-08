@@ -244,18 +244,23 @@ webhook (audioMessage de usuário ativo) → reserva (RECEIVED)
   READY é condicional (`status=RECEIVED`); depois vale a idempotência do pipeline textual.
 - **Respostas:** sempre texto (sem TTS).
 
-### Imagem / comprovante — V1.4 (implementado)
+### Imagem / comprovante — V1.4 (implementado; sem armazenamento desde 2026-10-08)
+
+Imagens de comprovante são processadas de forma efêmera, em memória, e **não são retidas**
+(nenhum Storage, arquivo temporário, bytes, base64 ou URL persistidos).
 
 ```
 webhook (imageMessage de usuário ativo) → reserva (RECEIVED)
-  → tamanho declarado (dica) → download por id (mesmo endpoint do áudio, mediaType=imageMessage)
+  → tamanho declarado (dica) → download por id em memória (mesmo endpoint do áudio,
+    mediaType=imageMessage)
   → common.images.normalize_image: formato pelos bytes (JPEG/PNG/WEBP/GIF estático), Pillow,
     limite de pixels antes de decodificar, orientação EXIF aplicada, metadados (EXIF/GPS/texto)
-    removidos na regravação, SHA-256
-  → upload no bucket PRIVADO (receipts/AAAA/MM/<uuid>.<ext>, x-upsert=false) → ReceiptAttachment STORED
-  → 1 chamada de visão (OPENAI_VISION_MODEL, input_image data URL, detail=high, schema estrito)
+    removidos na regravação, SHA-256 dos bytes normalizados; bytes originais descartados
+  → 1 chamada de visão com os bytes normalizados (OPENAI_VISION_MODEL, input_image data URL,
+    detail=high, schema estrito, store=False)
   → actions.plan_receipt (regras Django) → pipeline.commit_plan (create_transaction, source=IMAGE,
-    vínculo do anexo e PROCESSED no mesmo atomic) → resposta local
+    ReceiptAttachment PROCESSED e mensagem PROCESSED no mesmo atomic) → resposta local
+  → bytes normalizados descartados ao fim da request
 ```
 
 - **Registro direto, sem etapa de confirmação**: só cria quando tudo é inequívoco (documento
@@ -267,12 +272,17 @@ webhook (imageMessage de usuário ativo) → reserva (RECEIVED)
   de um valor pago ou recebido? Envie em texto...". Moeda ≠ BRL → não converte.
 - **Códigos**: `NOT_A_RECEIPT`, `AMOUNT_UNREADABLE`, `FOREIGN_CURRENCY`, `CURRENCY_UNCLEAR`,
   `DIRECTION_UNCLEAR`, `DATE_UNREADABLE`, `REJECTED_*`, `IMAGE_*` (PROCESSED, sem efeito);
-  `IMAGE_DOWNLOAD_FAILED`, `STORAGE_<código>`, `VISION_<código>` (FAILED, sem efeito).
-- **Ordem**: Storage antes da visão (evidência preservada). Falha de upload → não chama visão.
-  Falha de visão após upload → anexo `FAILED`, arquivo mantido. Sem retry automático.
-- **Idempotência**: reentrega para na reserva (sem novo download/upload/visão);
-  `ReceiptAttachment.inbound_message` é one-to-one; a transação usa a mesma `idempotency_key`.
-- **Resposta**: o mesmo card de registro do texto seguido de "Comprovante guardado." — nunca
-  URL do Storage; nenhuma imagem é enviada de volta.
+  `IMAGE_DOWNLOAD_FAILED`, `VISION_<código>`, `IMAGE_PIPELINE_ERROR`,
+  `IMAGE_ATTACHMENT_FAILED` (FAILED, sem efeito).
+- **Falhas**: download ou normalização falham → nada gravado além do status da mensagem;
+  visão falha → `ReceiptAttachment` `FAILED` (só metadados, código `VISION_<código>`) + mensagem
+  `FAILED`, no mesmo atomic; erro no commit → rollback completo (sem transação parcial), depois
+  anexo `FAILED` (`PIPELINE_ERROR`) + mensagem `FAILED` (`IMAGE_PIPELINE_ERROR`); falha ao gravar o
+  anexo no commit → rollback, mensagem `FAILED` (`IMAGE_ATTACHMENT_FAILED`), nunca presa em
+  `RECEIVED`. Sem retry automático. Nenhuma chamada HTTP dentro de transação do banco.
+- **Idempotência**: reentrega para na reserva (sem novo download/visão); no máximo um
+  `ReceiptAttachment` por mensagem (one-to-one) e uma transação (mesma `idempotency_key`).
+  A mesma imagem em **outra** mensagem é um novo comprovante legítimo: o SHA-256 só audita.
+- **Resposta**: o mesmo card de registro do texto; nenhuma imagem ou URL é enviada de volta.
 
 Toda mídia é entrada não confiável: validar MIME/tamanho, nunca executar nem renderizar.

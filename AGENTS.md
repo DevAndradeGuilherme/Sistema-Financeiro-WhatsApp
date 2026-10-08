@@ -10,7 +10,7 @@ Controle financeiro pessoal e familiar operado pelo WhatsApp.
 Usuário escreve "10 reais de gasolina" ou "quanto gastei de transporte esse mês?" e o sistema
 registra ou consulta transações, respondendo pelo WhatsApp.
 
-Stack: Python, Django, PostgreSQL (Supabase), Supabase Storage, Evolution API, OpenAI,
+Stack: Python, Django, PostgreSQL (Supabase), Evolution API, OpenAI,
 Docker, Gunicorn, Nginx. Arquitetura: **monólito modular**.
 
 ## Princípio central
