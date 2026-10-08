@@ -149,7 +149,10 @@ testes de contrato e `CHANGELOG.md`.
     (dentro do `atomic`): `FAMILY`/`FAMILY_MEMBER`/`RANKING` exigem ser o ADMIN atual; nome
     presente com `SELF` é tratado como `FAMILY_MEMBER`; `RANKING` é sempre `FAMILY`.
 12. V1.5: análises usam `apps.transactions.analytics` com o mesmo `ReadScope` (item 11).
-    `months` fora de 1..12 → padrão (≤ 0/null) ou limitado a 12 (resposta avisa);
+    Em `MONTHLY_TREND`, `months` define a largura da janela e prevalece sobre `start_date`;
+    `end_date` apenas ancora o mês final (limitado a hoje). O contexto guarda a janela efetiva,
+    não datas auxiliares incompatíveis devolvidas pelo modelo. `months` fora de 1..12 → padrão
+    (≤ 0/null) ou limitado a 12 (resposta avisa);
     `CATEGORY_TREND` sem período B = mês anterior completo (mesma regra do `COMPARE`, ver
     limitação em `DOMAIN.md §4`); categoria inválida → "não encontrei". A IA só classifica: os
     valores e percentuais são calculados no banco/`Decimal` e o texto é montado localmente.

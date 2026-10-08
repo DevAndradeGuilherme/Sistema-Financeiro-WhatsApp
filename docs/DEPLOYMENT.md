@@ -53,8 +53,9 @@ Internet ──HTTPS──> Nginx ──HTTP──> Gunicorn (Django) ──SSL�
 ```
 
 - **Gunicorn**: workers síncronos; `--timeout` maior que o pior caso do pipeline síncrono
-  (`OPENAI_TIMEOUT_SECONDS` + `EVOLUTION_TIMEOUT_SECONDS` + margem). Número de workers
-  ajustado à memória/CPU do host.
+  (somar download, transcrição/interpretação ou Storage/visão, envio Evolution e margem). Com os
+  valores do `.env.example`, o teto externo chega a cerca de 70 s; o default é 120 s. Número de
+  workers ajustado à memória/CPU do host, considerando a imagem decodificada e sua cópia base64.
 - **Nginx**: TLS, redirect HTTP→HTTPS, `client_max_body_size` limitado, rate limit no
   webhook, `proxy_set_header X-Forwarded-Proto`, servir estáticos.
 - Logs da aplicação em stdout/stderr (JSON ou texto estruturado), seguindo `SECURITY.md §5`.
@@ -67,6 +68,8 @@ Internet ──HTTPS──> Nginx ──HTTP──> Gunicorn (Django) ──SSL�
 3. `python manage.py check --deploy` sem avisos críticos.
 4. Subir nova versão; validar health check.
 5. Confirmar webhook da Evolution apontando para a URL HTTPS com segredo correto.
+6. Configurar `DJANGO_ALLOWED_HOSTS` com o domínio público e `127.0.0.1` para o health check;
+   `host.docker.internal` é apenas para a integração Docker local quando necessária.
 
 Rollback: voltar imagem anterior; migrations devem ser compatíveis com a versão anterior
 sempre que possível (expandir → migrar → contrair).

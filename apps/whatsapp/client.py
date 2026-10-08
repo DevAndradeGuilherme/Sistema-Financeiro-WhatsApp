@@ -55,6 +55,8 @@ class MediaTooLargeError(EvolutionError):
 
 _MESSAGE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _JSON_OVERHEAD = 64 * 1024
+_DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024
+_MAX_ERROR_BODY_BYTES = 4096
 
 
 @dataclass(frozen=True)
@@ -203,12 +205,16 @@ class EvolutionClient:
 
         try:
             with urlopen(request, timeout=self.config.timeout) as response:  # noqa: S310
-                if max_response_bytes is None:
-                    raw = response.read()
-                else:
-                    raw = response.read(max_response_bytes + 1)  # never unbounded in memory
-                    if len(raw) > max_response_bytes:
+                response_limit = (
+                    max_response_bytes
+                    if max_response_bytes is not None
+                    else _DEFAULT_MAX_RESPONSE_BYTES
+                )
+                raw = response.read(response_limit + 1)  # never unbounded in memory
+                if len(raw) > response_limit:
+                    if max_response_bytes is not None:
                         raise MediaTooLargeError("Evolution response exceeds the size limit.")
+                    raise EvolutionResponseError("Evolution response exceeds the size limit.")
         except HTTPError as exc:
             detail = _error_detail(exc)
             exc.close()
@@ -240,7 +246,7 @@ class EvolutionClient:
 def _error_detail(exc: HTTPError) -> str:
     """Short message from an Evolution error body ({"response": {"message": [...]}})."""
     try:
-        body = json.loads(exc.read() or b"{}")
+        body = json.loads(exc.read(_MAX_ERROR_BODY_BYTES) or b"{}")
     except (ValueError, OSError):
         return ""
     if not isinstance(body, dict):

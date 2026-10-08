@@ -25,8 +25,8 @@ class FakeResponse:
         self._body = body
         self.status = status
 
-    def read(self):
-        return self._body
+    def read(self, size=-1):
+        return self._body if size < 0 else self._body[:size]
 
     def __enter__(self):
         return self
@@ -133,6 +133,46 @@ def test_non_json_response_raises():
         pytest.raises(EvolutionResponseError),
     ):
         EvolutionClient().get_server_info()
+
+
+def test_success_response_read_is_bounded():
+    huge = b"{" + b"x" * (2 * 1024 * 1024)
+    reads = []
+
+    class Tracking(FakeResponse):
+        def read(self, size=-1):
+            reads.append(size)
+            return super().read(size)
+
+    with (
+        mock.patch("apps.whatsapp.client.urlopen", return_value=Tracking(huge)),
+        pytest.raises(EvolutionResponseError, match="size limit"),
+    ):
+        EvolutionClient().get_server_info()
+    assert reads == [1024 * 1024 + 1]
+
+
+def test_http_error_body_read_is_bounded():
+    reads = []
+
+    class Tracking(io.BytesIO):
+        def read(self, size=-1):
+            reads.append(size)
+            return super().read(size)
+
+    error = HTTPError(
+        "http://evolution.test/x",
+        500,
+        "error",
+        {},
+        Tracking(b'{"error":"' + b"x" * 100_000 + b'"}'),
+    )
+    with (
+        mock.patch("apps.whatsapp.client.urlopen", side_effect=error),
+        pytest.raises(EvolutionHTTPError),
+    ):
+        EvolutionClient().get_server_info()
+    assert reads == [4096]
 
 
 def test_set_webhook_sends_only_messages_upsert_with_secret_header():

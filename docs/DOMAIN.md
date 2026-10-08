@@ -139,9 +139,11 @@ fatos neutros, sem aconselhamento financeiro.
   receita e as 3 principais categorias de gasto. Percentuais: despesas/receitas e economia
   (`(receitas − despesas) ÷ receitas`); acima de 100% ou negativos são mostrados como são;
   **com receitas = 0 nenhum percentual é mostrado**.
-- **Evolução mensal (`MONTHLY_TREND`)**: meses civis, janela de 1 a 12 meses terminando no mês
-  corrente (incluído, até hoje); padrão 6; pedido acima de 12 é limitado a 12 e a resposta diz
-  isso; valor nulo/zero/negativo → padrão. Métricas `EXPENSE`, `INCOME`, `BALANCE`. Meses sem
+- **Evolução mensal (`MONTHLY_TREND`)**: meses civis, janela de 1 a 12 meses normalmente
+  terminando no mês corrente (incluído, até hoje); em follow-up com `end_date`, essa data apenas
+  ancora o mês final. `months` define a largura e prevalece sobre qualquer `start_date` auxiliar.
+  O contexto persiste a janela efetiva. Padrão 6; pedido acima de 12 é limitado a 12 e a resposta
+  diz isso; valor nulo/zero/negativo → padrão. Métricas `EXPENSE`, `INCOME`, `BALANCE`. Meses sem
   movimentação contam como zero (inclusive na média mensal).
 - **Variação por categoria (`CATEGORY_TREND`)**: total por categoria no período A × período B,
   em uma única query. `INCREASE` = categorias que aumentaram (maior aumento primeiro);

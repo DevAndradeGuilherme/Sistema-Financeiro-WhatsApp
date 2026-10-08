@@ -126,7 +126,12 @@ def reject_media(record: InboundMessage, code: str, reply: str) -> None:
         processed_at=timezone.now(),
         updated_at=timezone.now(),
     )
-    logger.info("audio.rejected provider_message_id=%s reason=%s", record.provider_message_id, code)
+    logger.info(
+        "media.rejected provider_message_id=%s message_type=%s reason=%s",
+        record.provider_message_id,
+        record.message_type,
+        code,
+    )
     if updated:
         send_reply(record, reply)
 

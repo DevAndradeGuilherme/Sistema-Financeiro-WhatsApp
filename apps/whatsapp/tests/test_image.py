@@ -14,7 +14,7 @@ from decimal import Decimal
 from unittest import mock
 
 import pytest
-from django.db import connections
+from django.db import IntegrityError, connections
 from django.utils import timezone
 from PIL import Image
 
@@ -371,7 +371,7 @@ def test_actual_size_above_limit(client, alice, evolution, download, storage, vi
     ],
 )
 def test_invalid_image_never_stored_nor_analysed(
-    client, alice, evolution, download, storage, vision, data, code
+    client, alice, evolution, download, storage, vision, data, code, caplog
 ):
     download.return_value = DownloadedMedia(data, "image/jpeg")
     record = post_image(client)
@@ -380,6 +380,8 @@ def test_invalid_image_never_stored_nor_analysed(
     storage.upload.assert_not_called()
     vision.assert_not_called()
     assert not ReceiptAttachment.objects.exists()
+    assert "media.rejected" in caplog.text
+    assert "message_type=IMAGE" in caplog.text
 
 
 # --- Failures ------------------------------------------------------------------------------------
@@ -443,6 +445,21 @@ def test_failure_while_committing_rolls_back(client, alice, evolution, download,
     assert record.status == Status.FAILED
     assert not Transaction.objects.exists()
     assert ReceiptAttachment.objects.get().status == AStatus.FAILED
+
+
+def test_attachment_persistence_failure_cleans_storage_and_terminates_message(
+    client, alice, evolution, download, storage, vision
+):
+    with mock.patch(
+        "apps.whatsapp.image.ReceiptAttachment.objects.create",
+        side_effect=IntegrityError,
+    ):
+        record = post_image(client)
+    record.refresh_from_db()
+    assert (record.status, record.error_code) == (Status.FAILED, "IMAGE_ATTACHMENT_FAILED")
+    storage.delete.assert_called_once()
+    vision.assert_not_called()
+    assert not Transaction.objects.exists()
 
 
 # --- Idempotency ---------------------------------------------------------------------------------

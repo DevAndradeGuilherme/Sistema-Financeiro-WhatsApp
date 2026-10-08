@@ -342,7 +342,18 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
     elif kind not in ("TOTAL", "LIST"):
         return ReplyPlan(i.intent, messages.NOT_UNDERSTOOD, "NOT_UNDERSTOOD")
 
-    period = _period(i.start_date, i.end_date, today, default_month=kind != "LIST")
+    months = metric = direction = None
+    months_capped = False
+    if kind == "MONTHLY_TREND":
+        # ``months`` defines the window width. The optional end date only anchors its final
+        # month; a model-proposed start date is irrelevant and must not invalidate the query.
+        months = i.months if isinstance(i.months, int) and i.months >= 1 else None
+        months_capped = months is not None and months > analytics.MAX_MONTHS
+        months = min(months or analytics.DEFAULT_TREND_MONTHS, analytics.MAX_MONTHS)
+        metric = i.trend_metric or i.transaction_type or TransactionType.EXPENSE
+        period = _monthly_period(i.end_date, today, months)
+    else:
+        period = _period(i.start_date, i.end_date, today, default_month=kind != "LIST")
     if isinstance(period, ReplyPlan):
         return ReplyPlan(i.intent, period.reply, period.code)
     start, end = period
@@ -375,14 +386,6 @@ def _plan_query(i: Interpretation, today: date) -> Plan:
     if kind in ("TOP", "LIST", "CATEGORY_TREND"):
         limit = DEFAULT_LIMIT if i.limit is None or i.limit < 1 else min(i.limit, MAX_LIMIT)
 
-    months = metric = direction = None
-    months_capped = False
-    if kind == "MONTHLY_TREND":
-        # Untrusted: null/zero/negative → default; above the maximum → capped (and said so).
-        months = i.months if isinstance(i.months, int) and i.months >= 1 else None
-        months_capped = months is not None and months > analytics.MAX_MONTHS
-        months = min(months or analytics.DEFAULT_TREND_MONTHS, analytics.MAX_MONTHS)
-        metric = i.trend_metric or i.transaction_type or TransactionType.EXPENSE
     if kind == "CATEGORY_TREND":
         direction = i.trend_direction or analytics.ALL
 
@@ -428,6 +431,26 @@ def _period(start_raw, end_raw, today: date, *, default_month: bool):
         start = end
     if start > end:
         return ReplyPlan("", messages.INVALID_PERIOD, "INVALID_PERIOD")
+    return start, end
+
+
+def _monthly_period(end_raw, today: date, months: int):
+    """Effective monthly window: ``months`` wins; ``end_raw`` only chooses the final month.
+
+    The model may emit an unrelated one-day ``start_date`` alongside ``months``. Ignoring that
+    start date prevents it from rejecting or narrowing the trend and keeps stored context
+    aligned with the window that PostgreSQL actually reads.
+    """
+    end_hint = _parse_date(end_raw) if end_raw else today
+    if end_hint is None:
+        return ReplyPlan("", messages.INVALID_DATE, "INVALID_DATE")
+    anchor = min(end_hint, today)
+    start = analytics.month_window(months, anchor)[0]
+    if (anchor.year, anchor.month) == (today.year, today.month):
+        end = today
+    else:
+        next_month = (anchor.replace(day=28) + timedelta(days=4)).replace(day=1)
+        end = next_month - timedelta(days=1)
     return start, end
 
 

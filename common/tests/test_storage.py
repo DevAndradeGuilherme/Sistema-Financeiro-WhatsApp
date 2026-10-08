@@ -140,6 +140,12 @@ def test_https_required():
         StorageConfig.from_settings()
 
 
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_timeout_must_be_positive(value):
+    with override_settings(SUPABASE_TIMEOUT_SECONDS=value), pytest.raises(ImproperlyConfigured):
+        StorageConfig.from_settings()
+
+
 def test_key_never_in_repr():
     assert KEY not in repr(StorageConfig.from_settings())
 

@@ -202,7 +202,8 @@ webhook (audioMessage de usuário ativo) → reserva (RECEIVED)
 - **Download (Evolution 2.3.7):** só o id da mensagem é enviado; a Evolution busca a mensagem no
   próprio banco (`DATABASE_SAVE_DATA_NEW_MESSAGE=true`, obrigatório) e baixa/decifra a mídia.
   Nenhuma URL, `mediaKey`, `directPath` ou `fileName` do webhook é repassado ou acessado (sem SSRF).
-  Resposta lida com teto (`AUDIO_MAX_BYTES` em base64 + 64 KiB), `mediaType` precisa ser
+  Resposta de mídia lida com teto (`AUDIO_MAX_BYTES` em base64 + 64 KiB); corpos de erro têm
+  teto de 4 KiB e respostas das demais operações, 1 MiB. `mediaType` precisa ser
   `audioMessage`, base64 validado (`validate=True`) e tamanho checado antes e depois de decodificar.
 - **Aceito:** nota de voz (`ptt=true`) e arquivo de áudio (`audioMessage`). `documentMessage` com
   extensão/MIME de áudio continua `UNSUPPORTED`.

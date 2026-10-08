@@ -65,6 +65,8 @@ class StorageConfig:
             timeout = float(required("SUPABASE_TIMEOUT_SECONDS"))
         except ValueError as exc:
             raise ImproperlyConfigured("SUPABASE_TIMEOUT_SECONDS must be a number.") from exc
+        if timeout <= 0:
+            raise ImproperlyConfigured("SUPABASE_TIMEOUT_SECONDS must be positive.")
         return cls(
             url=url,
             key=required("SUPABASE_SERVICE_ROLE_KEY"),

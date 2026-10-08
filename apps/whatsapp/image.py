@@ -202,6 +202,8 @@ def _store(record: InboundMessage, image) -> ReceiptAttachment | None:
         )
         with contextlib.suppress(StorageError):
             storage.delete(path)
+        mark_failed(record, "IMAGE_ATTACHMENT_FAILED")
+        send_reply(record, messages.TECHNICAL_ERROR)
         return None
 
 

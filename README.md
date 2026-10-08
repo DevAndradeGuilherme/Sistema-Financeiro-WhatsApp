@@ -7,8 +7,8 @@ O usuário envia mensagens em linguagem natural — "10 reais de gasolina",
 despesas/receitas ou responde consultas, sempre com validação, autorização e cálculo
 feitos no servidor.
 
-> **Status:** V1.0 em andamento — domínio financeiro (usuários, famílias, categorias,
-> transações, consultas) implementado; integração WhatsApp e IA pendentes.
+> **Status:** V1.5 concluída e validada em DEV — texto, áudio, comprovantes, famílias e
+> analytics implementados. Preparação de produção (Nginx/TLS, host e deploy) ainda pendente.
 > Veja `docs/ROADMAP.md`.
 
 ## Princípio
@@ -23,7 +23,7 @@ IA interpreta.  Django valida e autoriza.  PostgreSQL calcula e persiste.  Whats
 |---|---|
 | Aplicação | Python, Django (monólito modular) |
 | Banco | PostgreSQL gerenciado pelo Supabase |
-| Mídias (futuro) | Supabase Storage |
+| Mídias | Supabase Storage privado |
 | Canal | WhatsApp via Evolution API |
 | Interpretação | OpenAI (respostas estruturadas) |
 | Execução | Docker, Gunicorn, Nginx |

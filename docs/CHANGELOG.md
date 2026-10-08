@@ -6,6 +6,18 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Fixed — auditoria V1.3–V1.5
+- Respostas da Evolution agora têm leitura limitada também fora do caminho feliz de mídia;
+  corpos HTTP de erro são limitados a 4 KiB e demais respostas JSON a 1 MiB.
+- `MONTHLY_TREND` normaliza a janela efetiva: `months` prevalece sobre `start_date`, `end_date`
+  só ancora o mês final e o contexto não preserva uma data auxiliar de um único dia.
+- `SUPABASE_TIMEOUT_SECONDS` precisa ser positivo e rejeições compartilhadas de mídia usam o
+  evento de log correto para áudio e imagem.
+- Timeout default do Gunicorn elevado de 60 s para 120 s, acima do pior caminho síncrono
+  configurado para áudio/imagem.
+- Falha de persistência do `ReceiptAttachment` após upload agora encerra a mensagem como falha e
+  remove o objeto recém-enviado, evitando mensagens presas em `RECEIVED`.
+
 ### Added — V1.5: análises financeiras
 - Validação ao vivo concluída (2026-10-07): 8 consultas reais pelo WhatsApp (SELF, FAMILY,
   FAMILY_MEMBER e follow-up), valores conferidos no banco, sem mutações. `V1_5_LIVE_VALIDATION = COMPLETE`.

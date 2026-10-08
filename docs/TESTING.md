@@ -107,7 +107,8 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
   escopos FAMILY/FAMILY_MEMBER, agregação no banco) e `apps/whatsapp/tests/test_pipeline_v15.py`
   (PERIOD_SUMMARY/MONTHLY_TREND/CATEGORY_TREND ponta a ponta: SELF, ADMIN família/membro, MEMBER
   negado, membro externo, contexto manipulado, perda de papel, follow-ups, `months` padrão/3/12/
-  acima do máximo, 1 chamada de IA, nenhuma mutação, falha de envio sem recálculo).
+  acima do máximo, precedência de `months` sobre `start_date` e janela efetiva no contexto,
+  1 chamada de IA, nenhuma mutação, falha de envio sem recálculo).
 - Validação ao vivo V1.5 (2026-10-07): 8 mensagens reais pelo WhatsApp do ADMIN DEV; para cada uma,
   `InboundMessage` PROCESSED, 1 chamada OpenAI, 1 envio, contagens de `Transaction`/`TransactionChange`
   inalteradas e valores conferidos por SQL somente leitura no Supabase DEV (incluindo uma despesa

@@ -267,6 +267,31 @@ def test_monthly_trend_income_three_months(client, alice, ledger, ai, evolution)
     )
 
 
+def test_monthly_trend_months_override_start_date_and_context_matches_effective_window(
+    client, alice, ledger, ai, evolution
+):
+    """A stray one-day/contradictory start date must not narrow or reject a monthly window."""
+    ai.set(
+        query(
+            query_kind="MONTHLY_TREND",
+            trend_metric="EXPENSE",
+            months=3,
+            start_date=(today() + timedelta(days=1)).isoformat(),
+            end_date=today().isoformat(),
+        )
+    )
+    record = deliver(client, "como meus gastos evoluíram nos últimos 3 meses?")
+
+    context = ConversationContext.objects.get(user=alice).last_query
+    assert (context["start_date"], context["end_date"]) == (
+        month_start(2).isoformat(),
+        today().isoformat(),
+    )
+    assert reply(evolution).startswith("Gastos por mês (últimos 3 meses):")
+    record.refresh_from_db()
+    assert (record.status, record.error_code) == (Status.PROCESSED, "")
+
+
 def test_monthly_trend_balance(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="MONTHLY_TREND", trend_metric="BALANCE", months=3))
     deliver(client, "como meu saldo evoluiu?")
