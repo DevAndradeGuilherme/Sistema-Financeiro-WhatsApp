@@ -16,6 +16,8 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 - Migration `whatsapp/0005`: `storage_bucket`/`storage_path` anuláveis (legado, `NULL` em linhas
   novas), `CHECK` aceita `NULL`; nenhuma tabela nova, nenhum dado removido.
 - Resposta de comprovante não diz mais "Comprovante guardado." (nada é guardado).
+- Validação ao vivo concluída (2026-10-08): recibo real pelo WhatsApp DEV processado sem Storage
+  e sem service role key. `IMAGE_NO_STORAGE_LIVE_VALIDATION = COMPLETE`.
 
 ### Removed
 - `common/storage.py`, `storage_check`, testes do cliente Storage e as variáveis

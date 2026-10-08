@@ -81,8 +81,10 @@ família gastou esse mês?" (negar) e "quanto <ADMIN> gastou esse mês?" (negar)
 - IMAGE_NO_STORAGE_SMOKE_VALIDATION = COMPLETE (2026-10-08: pipeline real + OpenAI Vision real +
   Supabase DEV revertido; recibo sintético virou EXPENSE R$ 23,45 e paisagem NOT_A_RECEIPT, ambos
   com metadados e storage_path NULL; único host acessado: api.openai.com).
-- IMAGE_NO_STORAGE_LIVE_VALIDATION = PENDING_LIVE_VALIDATION (um comprovante real sem dados
-  sensíveis pelo WhatsApp DEV).
+- IMAGE_NO_STORAGE_LIVE_VALIDATION = COMPLETE (2026-10-08: um recibo real pelo WhatsApp DEV com o
+  app sem `SUPABASE_*`; mensagem PROCESSED, 1 download, 1 chamada Vision, despesa `source=IMAGE`
+  conferida por SQL, `ReceiptAttachment` PROCESSED com SHA-256 e `storage_*` NULL, nenhum
+  byte/base64 no banco, nenhum acesso ao Storage, resposta enviada pela Evolution).
 
 ## V1.5 — Análises
 
