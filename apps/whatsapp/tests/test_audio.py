@@ -20,6 +20,7 @@ from apps.ai.service import AIError
 from apps.ai.transcription import TranscriptionResult
 from apps.families.services import add_family_member, create_family
 from apps.transactions.models import Transaction, TransactionChange
+from apps.whatsapp import messages
 from apps.whatsapp.client import (
     DownloadedMedia,
     EvolutionHTTPError,
@@ -32,7 +33,7 @@ from apps.whatsapp.parsers import parse_evolution_event
 from apps.whatsapp.services import receive_message
 from common.dates import today_local
 
-from . import payloads
+from . import payloads, replies
 from .test_pipeline import deliver, interp
 
 pytestmark = pytest.mark.django_db
@@ -136,7 +137,9 @@ def test_audio_create_expense(client, alice, catalog, ai, evolution, download, t
         txn,
         "gastei dez reais de gasolina",
     )
-    assert reply(evolution) == "✅ Gasto registrado: R$ 10,00 em Transporte · Combustível."
+    assert replies.card(reply(evolution)) == replies.expense(
+        "10,00", "Transporte", today_local(), "Combustível"
+    )
 
 
 def test_audio_income_and_query(client, alice, catalog, ai, evolution, download, transcribe):
@@ -155,7 +158,7 @@ def test_audio_income_and_query(client, alice, catalog, ai, evolution, download,
         )
     )
     post_audio(client, message_id="A2")
-    assert reply(evolution).startswith("Você gastou R$ 0,00 com Transporte")
+    assert reply(evolution).startswith("Você não teve gastos com Transporte")
     assert Transaction.objects.count() == 1
 
 
@@ -202,7 +205,7 @@ def test_audio_family_query_follows_v12_policies(
         )
     )
     post_audio(client, message_id="A1")  # alice = ADMIN
-    assert reply(evolution).startswith("A família gastou R$ 20,00")
+    assert reply(evolution).startswith("Sua família gastou R$ 20,00")
 
     record = post_audio(client, message_id="A2", remote_jid=MARIA_JID)  # maria = MEMBER
     record.refresh_from_db()
@@ -348,7 +351,7 @@ def test_download_failure(client, alice, ai, evolution, download, transcribe, er
     transcribe.assert_not_called()
     ai.assert_not_called()
     assert not Transaction.objects.exists()
-    assert reply(evolution) == "Não consegui acessar esse áudio. Tente enviar novamente."
+    assert reply(evolution) == messages.AUDIO_DOWNLOAD_FAILED
 
 
 @pytest.mark.parametrize(
@@ -367,7 +370,7 @@ def test_declared_limits_reject_before_download(
     assert record.status == Status.PROCESSED
     assert record.error_code in ("AUDIO_TOO_LONG", "AUDIO_TOO_LARGE")
     download.assert_not_called()
-    assert reply(evolution) == "Esse áudio é muito grande. Envie um áudio mais curto."
+    assert reply(evolution) == messages.AUDIO_TOO_LARGE
 
 
 def test_actual_size_limit(client, alice, ai, evolution, download, transcribe):
@@ -415,7 +418,7 @@ def test_transcription_failure(client, alice, ai, evolution, download, transcrib
     assert (record.status, record.error_code) == (Status.FAILED, f"TRANSCRIPTION_{code}")
     ai.assert_not_called()
     assert not Transaction.objects.exists()
-    assert reply(evolution).startswith("Não consegui processar sua mensagem agora.")
+    assert reply(evolution) == messages.TECHNICAL_ERROR
 
 
 @pytest.mark.parametrize("code", ["EMPTY_TRANSCRIPT", "EMPTY_AUDIO"])
@@ -425,7 +428,7 @@ def test_empty_transcript(client, alice, ai, evolution, download, transcribe, co
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.PROCESSED, code)
     ai.assert_not_called()
-    assert reply(evolution) == "Não consegui entender o áudio. Pode repetir ou enviar por texto?"
+    assert reply(evolution) == messages.AUDIO_NOT_UNDERSTOOD
 
 
 def test_transcript_too_long(client, alice, ai, evolution, download, transcribe):

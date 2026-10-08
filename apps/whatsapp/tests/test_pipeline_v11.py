@@ -14,10 +14,12 @@ from django.utils import timezone
 
 from apps.ai.contract import TransactionReference, TransactionUpdates, parse_output
 from apps.transactions.models import Transaction, TransactionChange
+from apps.whatsapp import messages
 from apps.whatsapp.client import EvolutionHTTPError
 from apps.whatsapp.models import ConversationContext, InboundMessage
 from common.dates import today_local
 
+from .replies import rows
 from .test_pipeline import deliver, interp
 
 pytestmark = pytest.mark.django_db
@@ -76,9 +78,7 @@ def test_update_last_transaction_amount(client, alice, catalog, ai, evolution):
         "UPDATE_TRANSACTION",
         txn,
     )
-    assert last_reply(evolution) == (
-        "✏️ Gasto atualizado: R$ 10,00 → R$ 15,00 em Transporte · Combustível."
-    )
+    assert last_reply(evolution) == "Pronto, alterei esse gasto para R$ 15,00."
     change = TransactionChange.objects.get(action=Action.UPDATE)
     assert change.origin == "whatsapp:test-instance:M2"
 
@@ -170,9 +170,9 @@ def test_ambiguous_reference_changes_nothing(
     ]
     record.refresh_from_db()
     assert record.error_code == "AMBIGUOUS_REFERENCE"
-    assert last_reply(evolution) == (
-        "Encontrei mais de um gasto de gasolina. Pode me dizer o valor ou a data?"
-    )
+    reply = last_reply(evolution)
+    assert reply.startswith("Encontrei mais de um gasto parecido com gasolina.")
+    assert "valor ou a data" in reply
     assert not TransactionChange.objects.filter(action=Action.UPDATE).exists()
 
 
@@ -216,7 +216,7 @@ def test_update_category_and_subcategory(client, alice, catalog, ai, evolution):
     txn = Transaction.objects.get()
     assert (txn.category, txn.subcategory) == (catalog["transporte"], catalog["uber"])
     assert last_reply(evolution) == (
-        "✏️ Gasto atualizado: R$ 10,00 em Transporte · Uber (antes: Transporte · Combustível)."
+        "Pronto, alterei esse gasto: mudei a categoria para Transporte · Uber."
     )
 
     ai.set(update(LAST, category_id=catalog["alimentacao"].pk, description="lanche"))
@@ -294,7 +294,8 @@ def test_create_update_undo_undo(client, alice, catalog, ai, evolution):
     txn.refresh_from_db()
     assert (txn.amount, txn.deleted_at) == (Decimal("10.00"), None)
     assert last_reply(evolution) == (
-        "↩️ Alteração desfeita. O gasto voltou para R$ 10,00 em Transporte · Combustível."
+        "Pronto, desfiz a última alteração. "
+        "O gasto voltou para R$ 10,00 em Transporte · Combustível."
     )
     record.refresh_from_db()
     assert (record.intent, record.transaction) == ("UNDO_TRANSACTION", txn)
@@ -302,7 +303,9 @@ def test_create_update_undo_undo(client, alice, catalog, ai, evolution):
     deliver(client, "desfazer", "M4")
     txn.refresh_from_db()
     assert txn.deleted_at is not None
-    assert last_reply(evolution) == "↩️ Registro de R$ 10,00 em Transporte · Combustível desfeito."
+    assert last_reply(evolution) == (
+        "Pronto, removi o último lançamento (R$ 10,00 em Transporte · Combustível)."
+    )
 
     record = deliver(client, "desfazer", "M5")
     record.refresh_from_db()
@@ -544,9 +547,7 @@ def test_follow_up_without_context(client, alice, catalog, ai, evolution):
     record = deliver(client, "e mês passado?")
     record.refresh_from_db()
     assert record.error_code == "NO_CONTEXT"
-    assert last_reply(evolution) == (
-        "Não consegui identificar a consulta anterior. Pode repetir a pergunta completa?"
-    )
+    assert last_reply(evolution) == messages.NO_CONTEXT
     assert ai.call_args.args[1].previous_query is None
 
 
@@ -654,14 +655,15 @@ def test_top_expenses_default_limit(client, alice, october, ai, evolution):
     ai.set(query(query_kind="TOP"))
     deliver(client, "quais foram meus maiores gastos esse mês?")
     d = today()
-    assert last_reply(evolution) == (
-        f"Seus maiores gastos {period_text(month(d), d)}:\n"
-        "1. Mercado — R$ 180,00\n"
-        "2. Gasolina — R$ 120,00\n"
-        "3. Restaurante — R$ 80,00\n"
-        "4. Uber — R$ 15,50\n"
-        "5. Padaria — R$ 9,90"
-    )
+    reply = last_reply(evolution)
+    assert reply.startswith(f"Seus maiores gastos {period_text(month(d), d)} foram:")
+    assert rows(reply) == [
+        "Mercado: R$ 180,00",
+        "Gasolina: R$ 120,00",
+        "Restaurante: R$ 80,00",
+        "Uber: R$ 15,50",
+        "Padaria: R$ 9,90",
+    ]
 
 
 @pytest.mark.parametrize("limit, lines", [(2, 2), (50, 6), (0, 5)])
@@ -669,7 +671,7 @@ def test_top_expenses_limits(client, alice, october, ai, evolution, limit, lines
     ai.set(query(query_kind="TOP", limit=limit))
     deliver(client, "me mostra os maiores gastos")
     reply = last_reply(evolution)
-    assert len(reply.splitlines()) - 1 == lines  # max 10; only 6 active expenses exist
+    assert len(rows(reply)) == lines  # max 10; only 6 active expenses exist
     assert "5.000" not in reply and "7.777" not in reply  # deleted / other user
 
 
@@ -677,11 +679,9 @@ def test_breakdown_by_category(client, alice, october, ai, evolution):
     ai.set(query(query_kind="BREAKDOWN"))
     deliver(client, "onde eu mais gastei esse mês?")
     d = today()
-    assert last_reply(evolution) == (
-        f"Gastos por categoria {period_text(month(d), d)}:\n"
-        "1. Alimentação — R$ 269,90\n"
-        "2. Transporte — R$ 142,50"
-    )
+    reply = last_reply(evolution)
+    assert reply.startswith(f"{period_text(month(d), d).capitalize()}, seus gastos por categoria")
+    assert rows(reply) == ["Alimentação: R$ 269,90", "Transporte: R$ 142,50"]
 
 
 def test_breakdown_empty(client, alice, catalog, ai, evolution):
@@ -694,9 +694,9 @@ def test_list_recent(client, alice, october, ai, evolution):
     ai.set(query(query_kind="LIST", transaction_type="EXPENSE", limit=3))
     deliver(client, "quais foram meus últimos gastos?")
     reply = last_reply(evolution)
-    assert reply.startswith("Seus últimos gastos:")
-    assert len(reply.splitlines()) == 4
-    assert "Pedágio" in reply.splitlines()[1]  # newest registered first
+    assert reply.startswith("Estes são seus últimos gastos:")
+    assert len(rows(reply)) == 3
+    assert rows(reply)[0].startswith("Pedágio")  # newest registered first
     assert "Maria" not in reply and "Apagado" not in reply
 
 
@@ -721,7 +721,9 @@ def test_list_by_period_and_category(
         )
     )
     deliver(client, "me mostra os gastos de transporte de ontem")
-    assert last_reply(evolution) == (f"Seus gastos ontem:\n1. {yesterday:%d/%m} — Ônibus — R$ 3,00")
+    reply = last_reply(evolution)
+    assert reply.startswith("Estes foram seus gastos ontem:")
+    assert rows(reply) == [f"Ônibus: R$ 3,00 ({yesterday:%d/%m})"]
 
 
 def test_compare_periods(client, alice, catalog, ai, evolution, make_transaction):
@@ -746,7 +748,7 @@ def test_compare_periods(client, alice, catalog, ai, evolution, make_transaction
     deliver(client, "compare esse mês com o mês passado")
     assert last_reply(evolution) == (
         f"Você gastou R$ 850,00 {period_text(month(d), d)} e R$ 700,00 "
-        f"{period_text(p_start, p_end)}: R$ 150,00 a mais (+21,4%)."
+        f"{period_text(p_start, p_end)}. Foram R$ 150,00 a mais (+21,4%)."
     )
 
 
@@ -760,7 +762,9 @@ def test_compare_defaults_to_previous_month(
     )
     ai.set(query(query_kind="COMPARE"))
     deliver(client, "gastei mais esse mês ou mês passado?")
-    assert last_reply(evolution).endswith("R$ 100,00 a mais (sem gastos no período anterior).")
+    reply = last_reply(evolution)
+    assert "R$ 100,00 a mais" in reply
+    assert reply.endswith("não houve gastos no período anterior.")
 
 
 def test_compare_equal_and_income(client, alice, catalog, ai, evolution, make_transaction):
@@ -778,7 +782,7 @@ def test_compare_equal_and_income(client, alice, catalog, ai, evolution, make_tr
     deliver(client, "recebi mais esse mês?")
     reply = last_reply(evolution)
     assert reply.startswith("Você recebeu R$ 3.000,00")
-    assert reply.endswith(": o mesmo valor.")
+    assert reply.endswith("Foi o mesmo valor nos dois períodos.")
 
 
 def test_existing_total_and_balance_still_work(client, alice, october, ai, evolution):

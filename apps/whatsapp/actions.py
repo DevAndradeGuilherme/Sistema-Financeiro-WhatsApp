@@ -617,7 +617,6 @@ def _execute_create(
         category=txn.category.name,
         subcategory=txn.subcategory.name if txn.subcategory else None,
         transaction_date=txn.transaction_date,
-        today=today,
     )
     return Outcome(p.intent, reply, transaction=txn)
 

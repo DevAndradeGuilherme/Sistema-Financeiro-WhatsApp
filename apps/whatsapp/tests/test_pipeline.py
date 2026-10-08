@@ -15,13 +15,15 @@ from apps.ai.contract import Interpretation
 from apps.ai.service import AIError
 from apps.categories.models import Category
 from apps.transactions.models import Transaction, TransactionSource
+from apps.whatsapp import messages
 from apps.whatsapp.client import EvolutionHTTPError
 from apps.whatsapp.models import InboundMessage
 from apps.whatsapp.pipeline import handle_ready_message
 from common.dates import today_local
 from common.formatting import format_date
 
-from . import payloads
+from . import payloads, replies
+from .replies import card
 
 pytestmark = pytest.mark.django_db
 
@@ -117,8 +119,8 @@ def test_create_expense(client, alice, catalog, ai, evolution, message, amount, 
     assert record.error_code == ""
     ai.assert_called_once()
     amount_text = "10,50" if expected == Decimal("10.50") else "10,00"
-    assert (
-        reply_of(evolution) == f"✅ Gasto registrado: R$ {amount_text} em Transporte · Combustível."
+    assert card(reply_of(evolution)) == replies.expense(
+        amount_text, "Transporte", today(), "Combustível"
     )
 
 
@@ -138,7 +140,7 @@ def test_expense_with_relative_date(client, alice, catalog, ai, evolution):
     txn = Transaction.objects.get()
     assert txn.transaction_date == yesterday
     assert txn.amount == Decimal("40.00")
-    assert reply_of(evolution).endswith("Transporte · Combustível (ontem).")
+    assert card(reply_of(evolution))["Data"] == format_date(yesterday)
 
 
 def test_expense_in_other_category(client, alice, catalog, ai, evolution):
@@ -158,7 +160,7 @@ def test_expense_in_other_category(client, alice, catalog, ai, evolution):
         catalog["alimentacao"],
         "mercado",
     )
-    assert reply_of(evolution) == "✅ Gasto registrado: R$ 35,90 em Alimentação."
+    assert card(reply_of(evolution)) == replies.expense("35,90", "Alimentação", today())
 
 
 def test_create_income(client, alice, catalog, ai, evolution):
@@ -177,7 +179,7 @@ def test_create_income(client, alice, catalog, ai, evolution):
         Decimal("2185.00"),
         catalog["salario"],
     )
-    assert reply_of(evolution) == "✅ Entrada registrada: R$ 2.185,00 em Salário."
+    assert card(reply_of(evolution)) == replies.income("2.185,00", "Salário", today())
 
 
 def test_income_without_category_uses_income_fallback(client, alice, catalog, ai, evolution):
@@ -253,7 +255,7 @@ def test_incompatible_subcategory_is_dropped(client, alice, catalog, ai, evoluti
     txn = Transaction.objects.get()
     assert txn.category == catalog["alimentacao"]
     assert txn.subcategory is None
-    assert reply_of(evolution) == "✅ Gasto registrado: R$ 20,00 em Alimentação."
+    assert card(reply_of(evolution)) == replies.expense("20,00", "Alimentação", today())
 
 
 def test_subcategory_alone_implies_its_category(client, alice, catalog, ai, evolution):
@@ -276,34 +278,25 @@ def test_subcategory_alone_implies_its_category(client, alice, catalog, ai, evol
 @pytest.mark.parametrize(
     "fields, code, reply",
     [
+        ({"amount": None}, "MISSING_AMOUNT", messages.MISSING_AMOUNT),
+        ({"amount": "abc"}, "INVALID_AMOUNT", messages.INVALID_AMOUNT),
+        ({"amount": "0"}, "REJECTED_AMOUNT", messages.rejected("O valor deve ser maior que zero.")),
         (
-            {"amount": None},
-            "MISSING_AMOUNT",
-            "Não identifiquei o valor. Envie de novo com o valor, por exemplo: "
-            "25 reais de gasolina.",
+            {"amount": "-10"},
+            "REJECTED_AMOUNT",
+            messages.rejected("O valor deve ser maior que zero."),
         ),
-        (
-            {"amount": "abc"},
-            "INVALID_AMOUNT",
-            "Não entendi o valor. Envie, por exemplo: 25,90 de mercado.",
-        ),
-        ({"amount": "0"}, "REJECTED_AMOUNT", "Não registrei: O valor deve ser maior que zero."),
-        ({"amount": "-10"}, "REJECTED_AMOUNT", "Não registrei: O valor deve ser maior que zero."),
         (
             {"amount": "10.555"},
             "REJECTED_AMOUNT",
-            "Não registrei: O valor deve ter no máximo 2 casas decimais.",
+            messages.rejected("O valor deve ter no máximo 2 casas decimais."),
         ),
         (
             {"amount": "5000000"},
             "REJECTED_AMOUNT",
-            "Não registrei: O valor excede o limite permitido por transação.",
+            messages.rejected("O valor excede o limite permitido por transação."),
         ),
-        (
-            {"transaction_date": "2026-02-30"},
-            "INVALID_DATE",
-            "Não entendi a data. Tente, por exemplo: 'ontem' ou 'dia 5'.",
-        ),
+        ({"transaction_date": "2026-02-30"}, "INVALID_DATE", messages.INVALID_DATE),
         ({"transaction_type": None}, "NOT_UNDERSTOOD", None),
     ],
 )
@@ -340,7 +333,7 @@ def test_future_date_rejected(client, alice, catalog, ai, evolution):
     assert not Transaction.objects.exists()
     record.refresh_from_db()
     assert record.error_code == "REJECTED_TRANSACTION_DATE"
-    assert reply_of(evolution) == "Não registrei: Data da transação não pode estar no futuro."
+    assert reply_of(evolution) == messages.rejected("Data da transação não pode estar no futuro.")
 
 
 # --- QUERY ---------------------------------------------------------------------------------
@@ -434,10 +427,9 @@ def test_balance_query(client, alice, ledger, ai, evolution):
         interp(intent="QUERY_TRANSACTIONS", query_kind="BALANCE", start_date=start, end_date=end)
     )
     deliver(client, "qual meu saldo esse mês?")
-    assert reply_of(evolution) == (
-        f"Seu saldo {period_text(d.replace(day=1), d)} é R$ 2.913,00 "
-        "(entradas R$ 3.000,00; gastos R$ 87,00)."
-    )
+    reply = reply_of(evolution)
+    assert reply.startswith(f"Seu saldo {period_text(d.replace(day=1), d)} ficou em R$ 2.913,00.")
+    assert "Entraram R$ 3.000,00 e saíram R$ 87,00." in reply
 
 
 def test_query_today_and_yesterday(client, alice, catalog, ledger, ai, evolution, make_transaction):
@@ -493,7 +485,7 @@ def test_invalid_period_rejected(client, alice, ledger, ai, evolution):
     record = deliver(client, "quanto gastei?")
     record.refresh_from_db()
     assert record.error_code == "INVALID_PERIOD"
-    assert reply_of(evolution).startswith("Período inválido")
+    assert reply_of(evolution) == messages.INVALID_PERIOD
 
 
 @pytest.mark.parametrize("category_key", ["salario", None])
@@ -645,9 +637,7 @@ def test_ai_failure_creates_nothing(client, alice, catalog, ai, evolution, code)
     assert record.status == Status.FAILED
     assert record.error_code == f"AI_{code}"
     assert not Transaction.objects.exists()
-    assert reply_of(evolution) == (
-        "Não consegui processar sua mensagem agora. Tente novamente em alguns instantes."
-    )
+    assert reply_of(evolution) == messages.TECHNICAL_ERROR
 
 
 def test_failure_while_marking_processed_rolls_back_transaction(
@@ -720,7 +710,6 @@ def test_reply_shows_saved_values(client, alice, catalog, ai, evolution):
     )
     deliver(client, "1234,50 de transporte")
     txn = Transaction.objects.get()
-    assert reply_of(evolution) == (
-        f"✅ Gasto registrado: R$ 1.234,50 em {txn.category.name} "
-        f"(em {format_date(txn.transaction_date)})."
+    assert card(reply_of(evolution)) == replies.expense(
+        "1.234,50", txn.category.name, txn.transaction_date
     )

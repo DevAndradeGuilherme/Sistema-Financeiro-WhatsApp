@@ -12,10 +12,12 @@ from apps.ai.contract import TransactionReference, TransactionUpdates
 from apps.families.models import FamilyMember
 from apps.families.services import add_family_member, create_family
 from apps.transactions.models import Transaction, TransactionChange
+from apps.whatsapp import messages
 from apps.whatsapp.models import ConversationContext, InboundMessage
 from common.dates import today_local
 from common.formatting import describe_period
 
+from .replies import rows
 from .test_pipeline import deliver, interp
 
 pytestmark = pytest.mark.django_db
@@ -120,7 +122,7 @@ def test_admin_self_query_still_own_data(client, alice, ledger, ai, evolution):
 def test_family_total(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="TOTAL", transaction_type="EXPENSE", scope="FAMILY"))
     record = deliver(client, "quanto minha família gastou esse mês?")
-    assert reply(evolution) == f"A família gastou R$ 1.730,00 {period_text(*month())}."
+    assert reply(evolution) == f"Sua família gastou R$ 1.730,00 {period_text(*month())}."
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.PROCESSED, "")
 
@@ -128,54 +130,53 @@ def test_family_total(client, alice, ledger, ai, evolution):
 def test_family_income_and_balance(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="TOTAL", transaction_type="INCOME", scope="FAMILY"))
     deliver(client, "quanto minha família recebeu esse mês?", "M1")
-    assert reply(evolution) == f"A família recebeu R$ 3.000,00 {period_text(*month())}."
+    assert reply(evolution) == f"Sua família recebeu R$ 3.000,00 {period_text(*month())}."
     ai.set(query(query_kind="BALANCE", scope="FAMILY"))
     deliver(client, "qual o saldo da minha família?", "M2")
     assert reply(evolution) == (
-        f"O saldo da família {period_text(*month())} é R$ 1.270,00 "
-        "(entradas R$ 3.000,00; gastos R$ 1.730,00)."
+        f"O saldo da sua família {period_text(*month())} ficou em R$ 1.270,00. "
+        "Entraram R$ 3.000,00 e saíram R$ 1.730,00."
     )
 
 
 def test_family_breakdown(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="BREAKDOWN", scope="FAMILY"))
     deliver(client, "quanto gastamos por categoria?")
-    assert reply(evolution) == (
-        f"Gastos da família por categoria {period_text(*month())}:\n"
-        "1. Transporte — R$ 1.000,00\n"
-        "2. Alimentação — R$ 730,00"
+    text = reply(evolution)
+    assert text.startswith(
+        f"{period_text(*month()).capitalize()}, os gastos da sua família por categoria"
     )
+    assert rows(text) == ["Transporte: R$ 1.000,00", "Alimentação: R$ 730,00"]
 
 
 def test_family_top(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="TOP", scope="FAMILY", limit=3))
     deliver(client, "quais foram os maiores gastos da família esse mês?")
-    assert reply(evolution) == (
-        f"Maiores gastos da família {period_text(*month())}:\n"
-        "1. Gasolina (Alice) — R$ 800,00\n"
-        "2. Mercado (Maria) — R$ 420,00\n"
-        "3. Alimentação (João) — R$ 310,00"
-    )
+    text = reply(evolution)
+    assert text.startswith(f"Os maiores gastos da sua família {period_text(*month())}")
+    assert rows(text) == [
+        "Gasolina (Alice): R$ 800,00",
+        "Mercado (Maria): R$ 420,00",
+        "Alimentação (João): R$ 310,00",
+    ]
 
 
 def test_family_compare(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="COMPARE", scope="FAMILY"))
     deliver(client, "compare os gastos da família desse mês com o mês passado")
     assert reply(evolution) == (
-        f"A família gastou R$ 1.730,00 {period_text(*month())} e R$ 100,00 "
-        f"{period_text(*prev_month())}: R$ 1.630,00 a mais (+1630,0%)."
+        f"Sua família gastou R$ 1.730,00 {period_text(*month())} e R$ 100,00 "
+        f"{period_text(*prev_month())}. Foram R$ 1.630,00 a mais (+1630,0%)."
     )
 
 
 def test_member_ranking(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="RANKING", scope="FAMILY"))
     deliver(client, "quem gastou mais esse mês?")
-    assert reply(evolution) == (
-        f"Gastos por pessoa {period_text(*month())}:\n"
-        "1. Alice — R$ 800,00\n"
-        "2. Maria — R$ 620,00\n"
-        "3. João — R$ 310,00"
-    )
+    text = reply(evolution)
+    assert text.startswith(f"{period_text(*month()).capitalize()}, os gastos da sua família por")
+    assert "por pessoa" in text
+    assert rows(text) == ["Alice: R$ 800,00", "Maria: R$ 620,00", "João: R$ 310,00"]
 
 
 def test_ranking_without_scope_is_still_family_and_authorized(client, maria, ledger, ai, evolution):
@@ -215,11 +216,9 @@ def test_member_total_and_category(client, alice, ledger, catalog, ai, evolution
 def test_member_top_and_compare(client, alice, ledger, ai, evolution):
     ai.set(query(query_kind="TOP", scope="FAMILY_MEMBER", target_member_name="Maria"))
     deliver(client, "quais foram os maiores gastos da Maria?", "M1")
-    assert reply(evolution) == (
-        f"Maiores gastos de Maria {period_text(*month())}:\n"
-        "1. Mercado — R$ 420,00\n"
-        "2. Transporte — R$ 200,00"
-    )
+    text = reply(evolution)
+    assert text.startswith(f"Os maiores gastos de Maria {period_text(*month())}")
+    assert rows(text) == ["Mercado: R$ 420,00", "Transporte: R$ 200,00"]
     ai.set(query(query_kind="COMPARE", scope="FAMILY_MEMBER", target_member_name="Maria"))
     deliver(client, "compare os gastos da Maria", "M2")
     assert reply(evolution).startswith(
@@ -252,7 +251,7 @@ def test_unknown_or_other_family_member(client, alice, ledger, ai, evolution):
         record = deliver(client, f"quanto {name} gastou?", f"M{index}")
         record.refresh_from_db()
         assert record.error_code == "MEMBER_NOT_FOUND"
-        assert reply(evolution) == "Não encontrei esse membro na sua família."
+        assert reply(evolution) == messages.MEMBER_NOT_FOUND
         assert "5.555" not in reply(evolution) and "7.777" not in reply(evolution)
 
 
@@ -273,7 +272,7 @@ def test_ambiguous_member_name(client, alice, family, ledger, make_user, ai, evo
     record.refresh_from_db()
     assert record.error_code == "MEMBER_AMBIGUOUS"
     assert reply(evolution) == (
-        "Encontrei mais de um membro chamado Maria na família. Pode informar o nome completo?"
+        "Encontrei mais de uma pessoa chamada Maria na família. Pode me dizer o nome completo?"
     )
     ai.set(
         query(
@@ -284,7 +283,7 @@ def test_ambiguous_member_name(client, alice, family, ledger, make_user, ai, evo
         )
     )
     deliver(client, "quanto a Maria Souza gastou?", "M2")
-    assert reply(evolution).startswith("Maria Souza gastou R$ 0,00")
+    assert reply(evolution).startswith("Maria Souza não teve gastos")
 
 
 # --- MEMBER isolation -----------------------------------------------------------------------
@@ -338,7 +337,7 @@ def test_admin_alone_in_family(client, alice, catalog, ai, evolution, make_trans
     )
     ai.set(query(query_kind="TOTAL", transaction_type="EXPENSE", scope="FAMILY"))
     deliver(client, "quanto minha família gastou?")
-    assert reply(evolution) == f"A família gastou R$ 15,00 {period_text(*month())}."
+    assert reply(evolution) == f"Sua família gastou R$ 15,00 {period_text(*month())}."
 
 
 # --- Mutations on someone else ----------------------------------------------------------------
@@ -355,7 +354,7 @@ def test_admin_alone_in_family(client, alice, catalog, ai, evolution, make_trans
                 scope="FAMILY_MEMBER",
                 target_member_name="Maria",
             ),
-            "Você só pode registrar transações na sua própria conta.",
+            messages.OWN_ACCOUNT_ONLY,
         ),
         (
             dict(
@@ -365,11 +364,11 @@ def test_admin_alone_in_family(client, alice, catalog, ai, evolution, make_trans
                 reference=TransactionReference(last=True),
                 updates=TransactionUpdates(amount="30"),
             ),
-            "Você só pode alterar suas próprias transações.",
+            messages.OWN_CHANGES_ONLY,
         ),
         (
             dict(intent="UNDO_TRANSACTION", scope="FAMILY_MEMBER", target_member_name="João"),
-            "Você só pode alterar suas próprias transações.",
+            messages.OWN_CHANGES_ONLY,
         ),
     ],
 )
@@ -421,7 +420,7 @@ def test_family_follow_up_period(client, alice, ledger, ai, evolution):
         )
     )
     deliver(client, "e mês passado?", "M2")
-    assert reply(evolution) == f"A família gastou R$ 100,00 {period_text(start, end)}."
+    assert reply(evolution) == f"Sua família gastou R$ 100,00 {period_text(start, end)}."
     previous = ai.call_args.args[1].previous_query
     assert (previous["scope"], previous["target_member_name"]) == ("FAMILY", None)
 
@@ -456,7 +455,7 @@ def test_member_follow_up_category_and_switch(client, alice, ledger, catalog, ai
         query(follow_up=True, query_kind="TOP", scope="FAMILY_MEMBER", target_member_name="Maria")
     )
     deliver(client, "e da Maria?", "M4")
-    assert reply(evolution).startswith("Maiores gastos de Maria")
+    assert reply(evolution).startswith("Os maiores gastos de Maria")
 
 
 def test_context_never_grants_permission_after_role_loss(client, alice, ledger, ai, evolution):

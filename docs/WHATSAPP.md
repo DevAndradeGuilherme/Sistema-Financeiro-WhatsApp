@@ -152,20 +152,41 @@ Retenção de `InboundMessage` deve ser definida antes da produção.
   texto (1–4096), usa `EVOLUTION_INSTANCE_NAME`, timeout `EVOLUTION_TIMEOUT_SECONDS`.
   Erros: `EvolutionTimeoutError`, `EvolutionConnectionError`, `EvolutionHTTPError(status_code)`,
   `EvolutionResponseError`. Sem retry próprio.
-- Respostas ao usuário: mensagens curtas, pt-BR, `R$ 1.234,56`, `dd/mm/aaaa`; falha no envio
-  é registrada e não desfaz a transação.
-- Textos: `apps/whatsapp/messages.py`. Exemplos: "✅ Gasto registrado: R$ 10,00 em Transporte ·
-  Combustível.", "✅ Entrada registrada: R$ 25,00 em Outras receitas.", "Você gastou R$ 10,00 com
-  Transporte em outubro.", "Seu saldo em outubro é R$ 15,00 (entradas R$ 25,00; gastos R$ 10,00).",
-  "✏️ Gasto atualizado: R$ 10,00 → R$ 15,00 em Transporte · Combustível.", "↩️ Alteração
-  desfeita. O gasto voltou para R$ 10,00 em Transporte · Combustível.", "↩️ Registro de
-  R$ 10,00 em Transporte · Combustível desfeito.", listas numeradas (até 10 linhas) para
-  maiores gastos/por categoria/últimos lançamentos e "Você gastou R$ 850,00 em outubro e
-  R$ 700,00 em setembro: R$ 150,00 a mais (+21,4%)."
-- V1.2 (família, ADMIN): "A família gastou R$ 1.730,00 em outubro.", "Maria gastou R$ 420,00 com
-  Alimentação em outubro.", "Gastos por pessoa em outubro:\n1. Alice — R$ 800,00 ...",
-  "Maiores gastos da família ...: 1. Mercado (Maria) — R$ 420,00". Negações discretas em
-  `DOMAIN.md §6`. Nunca telefone de membro em resposta.
+- Respostas ao usuário: pt-BR, `R$ 1.234,56`, `dd/mm/aaaa`; falha no envio é registrada e
+  não desfaz a transação. Textos montados localmente em `apps/whatsapp/messages.py` (nunca pela
+  IA), que só formata números já calculados por selectors/analytics.
+- **Registro (`CREATE_TRANSACTION`)**: único texto estruturado; a subcategoria é omitida quando
+  não existe e a data é sempre mostrada:
+
+  ```
+  ✅ Gasto registrado
+
+  💲 Valor: R$ 35,00
+  🗂️ Categoria: Transporte
+  🏷️ Subcategoria: Combustível
+  🗓️ Data: 08/10/2026
+  ```
+
+  Receita: título "✅ Receita registrada".
+- **Demais respostas**: conversacionais, curtas. Exemplos: "Você gastou R$ 10,00 com Transporte
+  em outubro.", "Você não teve gastos com Lazer em outubro.", "Seu saldo em outubro ficou em
+  R$ 15,00. Entraram R$ 25,00 e saíram R$ 10,00." (negativo: "ficou negativo em R$ 250,00"),
+  "Pronto, alterei esse gasto para R$ 15,00.", "Pronto, desfiz a última alteração. O gasto voltou
+  para R$ 10,00 em Transporte · Combustível.", "Pronto, removi o último lançamento (R$ 10,00 em
+  Transporte · Combustível).", "Você gastou R$ 850,00 em outubro e R$ 700,00 em setembro. Foram
+  R$ 150,00 a mais (+21,4%)." Listas (maiores gastos, por categoria, últimos lançamentos, até 10
+  linhas) têm uma frase de abertura e uma linha `Rótulo: R$ x` por item, ex.: "Seus maiores
+  gastos em outubro foram:\n\nMercado: R$ 180,00\nGasolina: R$ 120,00".
+- V1.2 (família, ADMIN): "Sua família gastou R$ 1.730,00 em outubro.", "Maria gastou R$ 420,00
+  com Alimentação em outubro.", "Em outubro, os gastos da sua família por pessoa foram:\n\nAlice:
+  R$ 800,00 ...", "Os maiores gastos da sua família em outubro foram: ... Mercado (Maria):
+  R$ 420,00". Negações discretas em `DOMAIN.md §6`. Nunca telefone de membro em resposta.
+- V1.5 (análises): resumo em parágrafos ("Em outubro, entraram R$ 3.000,00 e você gastou
+  R$ 1.050,00." / "Seu saldo no período ficou em R$ 1.950,00, com 35,0% da renda comprometida." /
+  categoria e gasto de destaque); evolução mensal "Nos últimos 6 meses, seus gastos foram:" +
+  "Outubro: R$ 1.050,00" + "A média mensal ficou em R$ 325,00."; variação por categoria "Em
+  outubro, os maiores aumentos nos seus gastos em relação a setembro foram:" +
+  "Transporte: +R$ 300,00 (+60,0%)". Só fatos, sem aconselhamento.
 
 Comandos (nunca imprimem API key nem segredo):
 
@@ -251,7 +272,7 @@ webhook (imageMessage de usuário ativo) → reserva (RECEIVED)
   Falha de visão após upload → anexo `FAILED`, arquivo mantido. Sem retry automático.
 - **Idempotência**: reentrega para na reserva (sem novo download/upload/visão);
   `ReceiptAttachment.inbound_message` é one-to-one; a transação usa a mesma `idempotency_key`.
-- **Resposta**: "✅ Gasto registrado: R$ 47,90 em Alimentação. Comprovante armazenado." — nunca
+- **Resposta**: o mesmo card de registro do texto seguido de "Comprovante guardado." — nunca
   URL do Storage; nenhuma imagem é enviada de volta.
 
 Toda mídia é entrada não confiável: validar MIME/tamanho, nunca executar nem renderizar.

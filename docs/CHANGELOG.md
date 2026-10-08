@@ -6,6 +6,17 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Changed — respostas do WhatsApp
+- Registro de transação (`CREATE_TRANSACTION`) responde com card estruturado (título, valor,
+  categoria, subcategoria quando existir e data sempre visível); entradas passam a se chamar
+  "Receita" nas respostas.
+- Demais respostas (TOTAL, BALANCE, LIST, TOP, BREAKDOWN, COMPARE, UPDATE, UNDO, erros, família,
+  membro, resumo, evolução mensal e variação por categoria) reescritas em tom conversacional:
+  totais zerados viram "não teve gastos", saldo negativo é escrito por extenso e listas perdem a
+  numeração. Valores, cálculos, autorização e selectors inalterados.
+- O resumo do período (`PERIOD_SUMMARY`) passa a ser descrito em parágrafos com receitas,
+  gastos, saldo, % da renda comprometida, categoria principal e maior gasto.
+
 ### Fixed — auditoria V1.3–V1.5
 - Respostas da Evolution agora têm leitura limitada também fora do caminho feliz de mídia;
   corpos HTTP de erro são limitados a 4 KiB e demais respostas JSON a 1 MiB.

@@ -22,6 +22,7 @@ from apps.ai.contract import ReceiptExtraction
 from apps.ai.service import AIError
 from apps.ai.vision import VisionResult
 from apps.transactions.models import Transaction, TransactionChange
+from apps.whatsapp import messages
 from apps.whatsapp.client import DownloadedMedia, EvolutionHTTPError, MediaTooLargeError
 from apps.whatsapp.models import InboundMessage, ReceiptAttachment
 from apps.whatsapp.parsers import parse_evolution_event
@@ -29,7 +30,7 @@ from apps.whatsapp.services import receive_message
 from common.dates import today_local
 from common.storage import StorageError
 
-from . import payloads
+from . import payloads, replies
 from .test_pipeline import deliver, interp
 
 pytestmark = pytest.mark.django_db
@@ -165,9 +166,9 @@ def test_expense_receipt_creates_transaction_and_links_attachment(
         txn,
         "CREATE_TRANSACTION",
     )
-    assert reply(evolution) == (
-        "✅ Gasto registrado: R$ 47,90 em Alimentação. Comprovante armazenado."
-    )
+    text = reply(evolution)
+    assert replies.card(text) == replies.expense("47,90", "Alimentação", txn.transaction_date)
+    assert text.endswith(messages.RECEIPT_STORED_SUFFIX)
 
 
 def test_storage_path_is_opaque(client, alice, evolution, download, storage, vision):
@@ -194,7 +195,8 @@ def test_pix_received_creates_income(client, alice, catalog, evolution, download
         Decimal("150.00"),
         catalog["outras_receitas"],
     )  # fallback by flag
-    assert reply(evolution).startswith("✅ Entrada registrada: R$ 150,00")
+    fields = replies.card(reply(evolution))
+    assert (fields["title"], fields["Valor"]) == ("✅ Receita registrada", "R$ 150,00")
 
 
 def test_pix_paid_creates_expense(client, alice, catalog, evolution, download, storage, vision):
@@ -243,25 +245,23 @@ def test_undo_by_text_soft_deletes_but_keeps_receipt(
                 "currency": "UNKNOWN",
             },
             "NOT_A_RECEIPT",
-            "Não consegui identificar um comprovante ou recibo nessa imagem.",
+            messages.NOT_A_RECEIPT,
         ),
         (
             {"amount": None},
             "AMOUNT_UNREADABLE",
-            "Identifiquei um comprovante, mas não consegui ler o valor com segurança.",
+            messages.RECEIPT_AMOUNT_UNREADABLE,
         ),
         (
             {"currency": "OTHER"},
             "FOREIGN_CURRENCY",
-            "Identifiquei um valor em outra moeda, mas essa versão registra apenas valores "
-            "em reais.",
+            messages.RECEIPT_FOREIGN_CURRENCY,
         ),
         ({"currency": "UNKNOWN"}, "CURRENCY_UNCLEAR", None),
         (
             {"document_type": "PAYMENT_PROOF", "transaction_type": "UNKNOWN"},
             "DIRECTION_UNCLEAR",
-            "Esse comprovante é de um valor pago ou recebido? Envie em texto, por exemplo: "
-            "'paguei 50 reais' ou 'recebi 50 reais'.",
+            messages.RECEIPT_DIRECTION_UNCLEAR,
         ),
         ({"amount": "abc"}, "AMOUNT_UNREADABLE", None),
         ({"amount": "1e3"}, "AMOUNT_UNREADABLE", None),  # scientific notation (audit fix)
@@ -351,7 +351,7 @@ def test_declared_size_above_limit_rejected_before_download(
     record.refresh_from_db()
     assert record.error_code == "IMAGE_TOO_LARGE"
     download.assert_not_called()
-    assert reply(evolution) == "Essa imagem é muito grande. Envie uma foto ou print menor."
+    assert reply(evolution) == messages.IMAGE_TOO_LARGE
 
 
 def test_actual_size_above_limit(client, alice, evolution, download, storage, vision):
@@ -393,7 +393,7 @@ def test_download_failure(client, alice, evolution, download, storage, vision):
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.FAILED, "IMAGE_DOWNLOAD_FAILED")
     storage.upload.assert_not_called()
-    assert reply(evolution) == "Não consegui acessar essa imagem. Tente enviar novamente."
+    assert reply(evolution) == messages.IMAGE_DOWNLOAD_FAILED
 
 
 @pytest.mark.parametrize(
