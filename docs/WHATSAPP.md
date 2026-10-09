@@ -17,7 +17,8 @@ Tabela `InboundMessage`: [`DATABASE.md`](DATABASE.md).
 | `views.py` | Webhook fino: autentica → parseia → service → status HTTP |
 | `client.py` | HTTP para a Evolution (stdlib `urllib`), timeout, erros tipados |
 | `admin.py` | `InboundMessage` somente leitura (diagnóstico, não é fila) |
-| `management/commands/` | `evolution_check`, `evolution_set_webhook`, `evolution_send_test` |
+| `recovery.py` | Diagnóstico e recuperação manual segura de mensagens interrompidas (`OPERATIONS.md`) |
+| `management/commands/` | `evolution_check`, `evolution_set_webhook`, `evolution_send_test`, `inbound_recovery` |
 
 O app não contém regra financeira; chama services/selectors dos apps de domínio.
 O pipeline futuro consome `InboundMessage` (`READY`, com `user` e `text`), nunca o JSON bruto.
@@ -142,9 +143,15 @@ Pipeline (`pipeline.handle_ready_message`), sem transação aberta durante HTTP:
 | `PROCESSED` | Tratada e respondida: efeito ou consulta concluídos. `error_code` preenchido = respondida com rejeição sem efeito (`MISSING_AMOUNT`, `REJECTED_AMOUNT`, `NOT_UNDERSTOOD`, ...) ou `REPLY_SEND_FAILED` |
 | `FAILED` | Falha técnica sem efeito financeiro (`AI_*`, `PIPELINE_ERROR`); não é reprocessada automaticamente |
 
+Recuperação manual (`inbound_recovery`, `OPERATIONS.md §2`), sem reprocessar: RECEIVED/READY
+travada sem efeito → `FAILED` com `STUCK_RECEIVED`/`STUCK_READY`; reenvio do card de um CREATE
+`REPLY_SEND_FAILED` → `REPLY_RESEND_PENDING` (reivindicado, envio em curso; se persistir, entrega
+desconhecida e recusado) → `REPLY_RESENT` ou de volta a `REPLY_SEND_FAILED`. Sem novos status
+nem migration (`error_code` é texto livre).
+
 Dados persistidos: campos técnicos + `sender_phone` + `text` **somente** para `READY`.
 Payload bruto **não** é armazenado (contém `apikey` da instância e dados pessoais).
-Retenção de `InboundMessage` deve ser definida antes da produção.
+Retenção inicial de `InboundMessage`: preservada para auditoria/idempotência (`OPERATIONS.md §3`).
 
 ## 6. Envio e operação
 

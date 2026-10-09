@@ -79,6 +79,19 @@ Revisores (Codex) devem usar este documento como checklist.
 - Não logar: chaves/tokens/headers de autenticação, payload bruto completo, texto completo
   de mensagens em nível INFO, telefones completos (mascarar: `+55319****8888`).
 - Exceções de clientes HTTP podem conter headers — sanitizar antes de logar.
+- Readiness (`/ready/`) responde só `{"status": ...}` e loga apenas o tipo da exceção do banco
+  (nunca host, usuário, senha ou mensagem). Liveness não acessa banco nem serviços externos.
+- Comando `inbound_recovery`: saída com ID interno, `provider_ref` parcial e telefone mascarado
+  (`common.phone.mask_phone`); nunca texto/transcrição, valores, mídia ou segredos.
+
+## 5.1 Recuperação operacional
+
+- Recuperação de mensagens só pelo comando `inbound_recovery` (`OPERATIONS.md §2`): dry-run por
+  padrão, `--execute` explícito, uma mensagem por vez, verificações sob lock da mensagem.
+- Nunca reexecuta interpretação/IA nem services financeiros; nunca altera `Transaction`,
+  `TransactionChange` ou `ReceiptAttachment`. Ações possíveis: reenviar o card de um CREATE já
+  comitado e inalterado, ou marcar `FAILED` mensagem travada comprovadamente sem efeito.
+  Estados ambíguos são recusados. SQL manual não é procedimento de recuperação.
 
 ## 6. Supabase
 
@@ -129,8 +142,9 @@ chamadas à Evolution sempre com timeout.
 ## 8. Dados
 
 - Soft delete para transações; exclusão física apenas por processo administrativo documentado.
-- Retenção de payload bruto e mídias deve ser definida antes de armazená-los (hoje nenhum
-  dos dois é armazenado). Retenção de `InboundMessage`, metadados e auditoria: pendente.
+- Payload bruto e mídias não são armazenados. Política inicial de retenção (ledger, auditoria,
+  metadados, `InboundMessage`, contexto, logs de 30 dias) em `OPERATIONS.md §3`; nenhum expurgo
+  automático implementado. Retenção dos provedores externos é separada e não é zero por padrão.
 - Dumps de banco nunca no repositório nem em máquinas sem criptografia.
 
 ## 9. Checklist de revisão de segurança
@@ -147,3 +161,5 @@ chamadas à Evolution sempre com timeout.
 - [ ] Algum segredo, telefone completo ou payload bruto em log?
 - [ ] Novas variáveis de ambiente adicionadas ao `.env.example` com placeholder?
 - [ ] Timeouts configurados em chamadas externas?
+- [ ] Health/readiness sem dados internos, sem chamadas externas e sem efeitos?
+- [ ] Recuperação/operação reexecuta algum efeito financeiro ou edita o ledger? (não pode)

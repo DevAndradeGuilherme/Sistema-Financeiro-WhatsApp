@@ -155,7 +155,7 @@ imutáveis em `Decimal`; nada é persistido. A resposta é montada localmente em
   banco `DB_*`) e `test.py` (suíte, banco `TEST_DB_*` local). A divisão existe para que os
   testes nunca usem a configuração de banco da aplicação.
 - `DJANGO_ENV=production` ativa guardas: falha se `DEBUG=True`, sem `ALLOWED_HOSTS` ou com
-  `SECRET_KEY` fraca; liga cookies seguros, HSTS e redirect HTTPS (exceto `/health/`).
+  `SECRET_KEY` fraca; liga cookies seguros, HSTS e redirect HTTPS (exceto `/health/` e `/ready/`).
 - `common` é um app Django (sem models) para poder registrar o handler de RLS pós-migrate.
 
 ## 8. Registro de decisões (ADR resumido)
@@ -217,3 +217,15 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
   o mesmo lock; membership isolado fica somente leitura. LogEntry participa da mesma transação.
   Nenhum schema/dependência novo. Exclusões administrativas de User/Family são bloqueadas;
   desativação preserva identidade e histórico. Ledger e diagnósticos permanecem somente leitura.
+- 2026-10-09 — Recuperação manual de mensagens por management command (`inbound_recovery`,
+  `whatsapp/recovery.py`), dry-run por padrão, sem worker/retry automático e **sem reprocessar**:
+  só reenvio do card de CREATE comitado e inalterado, ou `FAILED` para RECEIVED/READY travada sem
+  efeito; verificações sob o mesmo lock da mensagem usado pelo commit do efeito. Reprocessar
+  arriscaria data relativa errada e duplicata invisível à idempotência (usuário reenvia com outro id).
+  Estados de reenvio em `error_code` (sem migration).
+- 2026-10-09 — Liveness `/health/` (sem dependências) separada de readiness `/ready/` (`SELECT 1`,
+  `statement_timeout` local de 2 s, `503` genérico) — orquestrador não reinicia o processo por
+  queda do banco; nenhum provedor externo consultado.
+- 2026-10-09 — Gunicorn 23.0.0 → 26.2.0 (23.x sem suporte de segurança upstream; 26 é série
+  suportada, Python ≥ 3.10, sem dependências de runtime) e `--no-control-socket` — interface
+  de controle não usada; `packaging` passa a ser fixado só em `requirements-dev.txt` (pytest).

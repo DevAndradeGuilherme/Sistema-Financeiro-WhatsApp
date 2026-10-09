@@ -66,8 +66,9 @@ def receive_message(message: NormalizedMessage) -> InboundResult:
     return InboundResult(record=record, duplicate=False)
 
 
-def mark_failed(record: InboundMessage, error_code: str) -> None:
-    _mark_failed(record, error_code)
+def mark_failed(record: InboundMessage, error_code: str) -> bool:
+    """RECEIVED/READY → FAILED (conditional). Returns whether this call made the transition."""
+    return _mark_failed(record, error_code)
 
 
 def _reserve(message: NormalizedMessage) -> tuple[InboundMessage, bool]:
@@ -147,9 +148,11 @@ def _ignore(record: InboundMessage, reason: str) -> None:
     )
 
 
-def _mark_failed(record: InboundMessage, error_code: str) -> None:
+def _mark_failed(record: InboundMessage, error_code: str) -> bool:
     # Only messages without a committed effect may become FAILED.
-    InboundMessage.objects.filter(pk=record.pk, status__in=[Status.RECEIVED, Status.READY]).update(
+    updated = InboundMessage.objects.filter(
+        pk=record.pk, status__in=[Status.RECEIVED, Status.READY]
+    ).update(
         status=Status.FAILED,
         error_code=error_code[:50],
         processed_at=timezone.now(),
@@ -157,6 +160,7 @@ def _mark_failed(record: InboundMessage, error_code: str) -> None:
     )
     record.refresh_from_db()
     _log("inbound.failed", record)
+    return bool(updated)
 
 
 def _log(event: str, record: InboundMessage) -> None:

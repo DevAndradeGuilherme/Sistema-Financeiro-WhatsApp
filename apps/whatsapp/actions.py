@@ -611,14 +611,18 @@ def _execute_create(
     except ValidationError as exc:
         return _rejected(p.intent, exc)
 
-    reply = messages.transaction_created(
+    return Outcome(p.intent, created_reply(txn), transaction=txn)
+
+
+def created_reply(txn: Transaction) -> str:
+    """Registration card, derived only from the persisted transaction (also used by recovery)."""
+    return messages.transaction_created(
         is_income=txn.type == TransactionType.INCOME,
         amount=txn.amount,
         category=txn.category.name,
         subcategory=txn.subcategory.name if txn.subcategory else None,
         transaction_date=txn.transaction_date,
     )
-    return Outcome(p.intent, reply, transaction=txn)
 
 
 def _execute_update(p: UpdatePlan, user: User, idempotency_key: str) -> Outcome:

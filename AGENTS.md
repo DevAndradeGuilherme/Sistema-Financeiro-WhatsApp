@@ -62,6 +62,7 @@ Se uma necessidade técnica real surgir, registre a decisão em `docs/ARCHITECTU
 | Autenticação, autorização, segredos, logs, dados sensíveis | `docs/SECURITY.md` |
 | Escrever ou revisar testes | `docs/TESTING.md` |
 | Docker, Gunicorn, Nginx, variáveis de ambiente, Supabase | `docs/DEPLOYMENT.md` |
+| Health/readiness, recuperação de mensagens, retenção, incidentes | `docs/OPERATIONS.md` |
 | Auditoria/revisão (Codex) | `docs/SECURITY.md` + `docs/TESTING.md` + doc do módulo afetado |
 
 Não carregue toda a pasta `docs/` sem necessidade.

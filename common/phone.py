@@ -60,3 +60,10 @@ def _normalize_brazil(digits: str) -> str:
     if len(national) == 11 and national[2] != "9":
         raise InvalidPhoneNumber("Celular brasileiro com 9 dígitos deve começar com 9.")
     return BRAZIL_CODE + national
+
+
+def mask_phone(phone: str) -> str:
+    """Redacted phone for operational output/logs (``+55319****8888``). Never the full number."""
+    if not isinstance(phone, str) or len(phone) < 12:
+        return "***" if phone else "-"
+    return f"{phone[:6]}{'*' * (len(phone) - 10)}{phone[-4:]}"

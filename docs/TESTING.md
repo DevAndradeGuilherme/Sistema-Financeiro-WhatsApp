@@ -31,7 +31,7 @@ ruff check . && ruff format --check .            # lint
 
 ```
 apps/<app>/tests/      testes de unidade e de serviço do app
-common/tests/          helpers (dinheiro, datas, telefone) e infraestrutura (RLS, health)
+common/tests/          helpers (dinheiro, datas, telefone) e infraestrutura (RLS, health/readiness)
 tests/                 integração ponta a ponta (webhook → resposta) — a partir do webhook
 tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
 ```
@@ -150,6 +150,22 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
 
 ### Soft delete
 - Transação desfeita não aparece em consultas nem totais.
+
+### Operação (health/readiness e recuperação manual)
+- `common/tests/test_health.py`: liveness sem acesso ao banco (teste sem `django_db`) e de pé
+  com o banco quebrado; readiness 200 com PostgreSQL, 503 com `OperationalError`/`InterfaceError`/
+  `DatabaseError` sem vazar host/usuário/senha na resposta ou no log, 503 quando o
+  `statement_timeout` cancela a consulta (PostgreSQL real), só `SELECT`s e nenhuma chamada a
+  Evolution/OpenAI/httpx; POST negado.
+- `apps/whatsapp/tests/test_recovery.py`: diagnóstico de cada estado (travada, em curso, efeito
+  sem status terminal, efeito por `TransactionChange.origin`, anexo em imagem travada, FAILED com/
+  sem efeito, intenções não deriváveis, transação alterada, usuário inativo, reenvio interrompido);
+  dry-run sem mutação; `mark-failed` sem reprocessar (interpretação/transcrição/visão/services
+  financeiros falham o teste se chamados), idempotente e com cerca contra worker de texto/áudio
+  atrasado; `resend-reply` ponta a ponta após falha real de envio no pipeline, sem nova chamada de
+  IA nem alteração do ledger, no máximo uma vez, falha mantém recuperável; concorrência com duas
+  conexões PostgreSQL (um único envio/transição); saída do comando sem telefone completo, texto,
+  valores ou id completo do provedor; recusa com erro e sem efeito.
 
 ## 4. Testes com serviços reais
 

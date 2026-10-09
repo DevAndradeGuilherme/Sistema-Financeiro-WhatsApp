@@ -6,6 +6,32 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Added — hardening operacional de pré-produção
+- Readiness `GET /ready/`: `SELECT 1` no PostgreSQL com `statement_timeout` local de 2 s; `503`
+  com corpo fixo quando o banco falha; sem OpenAI/Evolution, sem escrita, sem detalhes internos.
+  `/health/` continua liveness pura (sem banco). Ambos isentos do redirect HTTPS.
+- Comando `inbound_recovery` (`list`, `inspect`, `resend-reply`, `mark-failed`): diagnóstico de
+  mensagens interrompidas com efeito financeiro (por `idempotency_key`/`origin`) e ação segura;
+  dry-run por padrão, `--execute` explícito, verificações sob o lock da mensagem. Nunca
+  reprocessa nem altera o ledger: reenvia apenas o card de CREATE comitado e inalterado
+  (`REPLY_RESEND_PENDING` → `REPLY_RESENT`) ou marca `FAILED` (`STUCK_*`) mensagem travada sem
+  efeito, com a resposta de erro técnico já existente. Estados ambíguos são recusados.
+- `docs/OPERATIONS.md`: runbook de health/readiness, recuperação, incidentes e política inicial
+  de retenção (ledger/auditoria/metadados retidos, `IMAGE_RETENTION = NONE`, `InboundMessage`
+  preservada, `ConversationContext` elegível a limpeza futura, logs com objetivo de 30 dias).
+- `common.phone.mask_phone` para saídas operacionais.
+
+### Changed
+- Gunicorn 23.0.0 → 26.2.0 (23.x sem suporte de segurança upstream; série 26 suportada,
+  Python ≥ 3.10). `--no-control-socket` no `CMD`. `packaging` sai de `requirements.txt`
+  (não é mais dependência do Gunicorn) e fica fixado em `requirements-dev.txt` (pytest).
+- `actions.created_reply` extraído para o pipeline e a recuperação usarem o mesmo card;
+  `services.mark_failed` informa se fez a transição. Sem mudança de comportamento ou textos.
+- Sem migration, sem dependência nova, sem mudança de IA ou de respostas do WhatsApp.
+- Validação: **858 testes passando** em PostgreSQL local (809 no baseline, 49 novos); smoke da
+  imagem Docker com Gunicorn 26.2.0/Python 3.12/Django 5.2.18 servindo `/health/` e `/ready/`
+  (200 com banco local; 503 com banco inacessível).
+
 ### Fixed — auditoria estrutural final
 - Normalização de imagens remove explicitamente metadados herdados, inclusive o perfil ICC
   que o encoder PNG preservava implicitamente; orientação e SHA-256 dos bytes enviados mantidos.

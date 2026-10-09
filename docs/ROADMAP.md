@@ -5,7 +5,8 @@ Versão atual: **V1.5 concluída** (análises financeiras validadas ponta a pont
 V1.4 concluída (comprovantes por imagem validados ponta a ponta em DEV, 2026-10-07).
 V1.2: validação real do fluxo MEMBER segue `PENDING_LIVE_VALIDATION` (ver status da V1.2).
 Pendência operacional antes de produção: Nginx/TLS, host/domínio e procedimento de deploy —
-produção **não** está pronta.
+produção **não** está pronta. Hardening operacional (2026-10-09): readiness, recuperação manual,
+Gunicorn suportado e política inicial de retenção (ver "Preparação de produção").
 
 Regra: implementar somente a versão corrente. Itens de versões futuras só influenciam
 o desenho quando registrado aqui (ex.: estrutura de família desde a V1.0).
@@ -81,7 +82,7 @@ família gastou esse mês?" (negar) e "quanto <ADMIN> gastou esse mês?" (negar)
   (`source=IMAGE`); registro direto quando inequívoco, "desfazer" disponível.
 - [x] Validação real (2026-10-07): recibo de despesa, Pix enviado e imagem não financeira pelo WhatsApp
   (Pix recebido validado por smoke sintético e testes).
-- IMAGE_RETENTION = NONE (imagens não são retidas); demais retenções seguem pendentes.
+- IMAGE_RETENTION = NONE (imagens não são retidas); demais retenções: política inicial em `OPERATIONS.md §3`.
 - IMAGE_NO_STORAGE_SMOKE_VALIDATION = COMPLETE (2026-10-08: pipeline real + OpenAI Vision real +
   Supabase DEV revertido; recibo sintético virou EXPENSE R$ 23,45 e paisagem NOT_A_RECEIPT, ambos
   com metadados e storage_path NULL; único host acessado: api.openai.com).
@@ -111,10 +112,28 @@ Status da V1.5 (2026-10-07):
 | INTEGRATED_LOCAL_VALIDATION | COMPLETE (pipeline real + OpenAI + Supabase DEV, dados sintéticos revertidos, sem envio) |
 | V1_5_LIVE_VALIDATION | COMPLETE (8 mensagens reais do ADMIN DEV: resumo, evolução 6 meses, aumentos por categoria, % da renda, resumo/evolução da família, resumo da Maria DEV e follow-up "e mês passado?"; valores conferidos por SQL, nenhuma mutação) |
 | MEMBER_LIVE_VALIDATION | PENDING_LIVE_VALIDATION (herdado da V1.2) |
-| RETENTION_POLICY | Imagens: `IMAGE_RETENTION = NONE` (2026-10-08). `InboundMessage`, metadados, `Transaction` e auditoria: PENDING_PRODUCT_DECISION |
+| RETENTION_POLICY | Imagens: `IMAGE_RETENTION = NONE` (2026-10-08). Demais dados: política inicial documentada em 2026-10-09 (`OPERATIONS.md §3`) |
 
 Limitação conhecida: `CATEGORY_TREND` sem período explícito compara o mês corrente até hoje com
 o mês anterior completo (mesma semântica do `COMPARE`); ver `DOMAIN.md §4`.
+
+## Preparação de produção (operacional, sem features)
+
+- [x] Hardening operacional (2026-10-09): liveness `/health/` + readiness `/ready/`; comando
+  `inbound_recovery` (diagnóstico e recuperação manual segura, dry-run por padrão, sem
+  reprocessamento financeiro); Gunicorn 26.2 (série suportada) com `--no-control-socket`;
+  runbook e retenção inicial em `OPERATIONS.md`. Sem migration.
+- [ ] Host/domínio, Nginx/TLS, segredos de produção, webhook e procedimento de deploy/rollback.
+- [ ] Backup/restauração validados no plano Supabase escolhido; rotação de logs (30 dias).
+- [ ] Dimensionar workers/memória/timeouts/rate limit; revisar retenção da Evolution e da OpenAI.
+- [ ] Expurgo de `InboundMessage.text`/`ConversationContext` conforme volume real (pós-produção).
+
+| Item | Status |
+|---|---|
+| RETENTION_POLICY | INITIAL_POLICY_DOCUMENTED (`OPERATIONS.md §3`; sem expurgo automático) |
+| IMAGE_RETENTION | NONE |
+| MEMBER_LIVE_VALIDATION | PENDING_LIVE_VALIDATION (risco operacional, não bug) |
+| DEPLOYED | NO |
 
 ## Fora do roadmap atual
 

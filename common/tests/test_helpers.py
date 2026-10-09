@@ -6,7 +6,7 @@ import pytest
 
 from common.dates import today_local
 from common.money import InvalidAmount, has_at_most_two_places, to_decimal
-from common.phone import InvalidPhoneNumber, normalize_phone
+from common.phone import InvalidPhoneNumber, mask_phone, normalize_phone
 
 
 @pytest.mark.parametrize(
@@ -62,3 +62,16 @@ def test_today_local_uses_business_timezone():
         "django.utils.timezone.now", return_value=datetime(2026, 10, 7, 1, 30, tzinfo=UTC)
     ):
         assert today_local() == date(2026, 10, 6)
+
+
+@pytest.mark.parametrize(
+    "phone, expected",
+    [
+        ("+5531999998888", "+55319****8888"),
+        ("+553199998888", "+55319***8888"),
+        ("+12025550", "***"),
+        ("", "-"),
+    ],
+)
+def test_mask_phone_never_returns_full_number(phone, expected):
+    assert mask_phone(phone) == expected

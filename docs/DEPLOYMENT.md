@@ -1,15 +1,18 @@
 # Deploy e ambientes
 
 Configuração de banco/Supabase: [`DATABASE.md §3`](DATABASE.md). Requisitos de segurança:
-[`SECURITY.md`](SECURITY.md).
+[`SECURITY.md`](SECURITY.md). Runbook operacional (health/readiness, recuperação manual,
+retenção): [`OPERATIONS.md`](OPERATIONS.md).
 
-> Implementado: Dockerfile, `compose.yaml`, Gunicorn, health check. Pendente: Nginx/TLS e
-> procedimento de produção (seções 4–5 são o alvo).
+> Implementado: Dockerfile, `compose.yaml`, Gunicorn, liveness `/health/` e readiness `/ready/`,
+> recuperação manual de mensagens. Pendente: Nginx/TLS e procedimento de produção (seções 4–5
+> são o alvo). A aplicação **não** está em produção.
 
 ## 1. Versões
 
 - Python 3.12 (imagem `python:3.12-slim`).
-- Django 5.2 LTS; psycopg 3; Gunicorn 23. Versões exatas em `requirements.txt`.
+- Django 5.2 LTS; psycopg 3; Gunicorn 26.2 (série suportada upstream; 23.x deixou de receber
+  correções de segurança). Versões exatas em `requirements.txt`.
 - PostgreSQL 17 (versão do projeto Supabase); testes locais em `postgres:17-alpine`.
 - Evolution API em versão fixada (tag explícita, nunca `latest`).
 
@@ -27,7 +30,9 @@ Um projeto Supabase de staging é recomendado antes de produção.
 
 - `Dockerfile`: `python:3.12-slim`, usuário não-root, `requirements.txt` fixado,
   `collectstatic` no build (valores placeholder só para esse passo), `HEALTHCHECK` em
-  `/health/`, `CMD` Gunicorn (`GUNICORN_WORKERS`, `GUNICORN_TIMEOUT`).
+  `/health/` (liveness), `CMD` Gunicorn (`GUNICORN_WORKERS`, `GUNICORN_TIMEOUT`, workers `sync`,
+  `--no-control-socket`: a interface de controle `gunicornc`, ativa por padrão desde a 25.1, não
+  é usada).
 - `compose.yaml`: serviço `web` (runserver, código montado, `.env`) apontando para o Supabase;
   serviço `test-db` só no profile `test`. Não há PostgreSQL local para a aplicação, Redis nem Nginx.
 - `requirements.txt` (runtime) e `requirements-dev.txt` (testes/lint), versões fixadas.
@@ -58,18 +63,23 @@ Internet ──HTTPS──> Nginx ──HTTP──> Gunicorn (Django) ──SSL�
   workers ajustado à memória/CPU do host, considerando a imagem decodificada e sua cópia base64.
 - **Nginx**: TLS, redirect HTTP→HTTPS, `client_max_body_size` limitado, rate limit no
   webhook, `proxy_set_header X-Forwarded-Proto`, servir estáticos.
-- Logs da aplicação em stdout/stderr (JSON ou texto estruturado), seguindo `SECURITY.md §5`.
-- Health check simples (`/health/`) sem expor dados nem versões.
+- Logs da aplicação em stdout/stderr (JSON ou texto estruturado), seguindo `SECURITY.md §5`;
+  objetivo de retenção de 30 dias no host (rotação do driver de logs), ver `OPERATIONS.md §3`.
+- Liveness `/health/` (sem banco) e readiness `/ready/` (`SELECT 1` com timeout curto, `503` se o
+  banco não responde), sem expor dados nem versões; detalhes em `OPERATIONS.md §1`.
 
 ## 5. Procedimento de deploy
 
 1. Build da imagem a partir de commit taggeado.
 2. `python manage.py migrate` como etapa explícita (não no boot de cada worker).
 3. `python manage.py check --deploy` sem avisos críticos.
-4. Subir nova versão; validar health check.
+4. Subir nova versão; validar `/health/` e `/ready/` (200) antes de liberar tráfego.
 5. Confirmar webhook da Evolution apontando para a URL HTTPS com segredo correto.
 6. Configurar `DJANGO_ALLOWED_HOSTS` com o domínio público e `127.0.0.1` para o health check;
    `host.docker.internal` é apenas para a integração Docker local quando necessária.
+
+Mensagens interrompidas por restart/deploy: recuperação manual pelo comando
+`inbound_recovery` (`OPERATIONS.md §2`); nunca SQL manual.
 
 Rollback: voltar imagem anterior; migrations devem ser compatíveis com a versão anterior
 sempre que possível (expandir → migrar → contrair).
