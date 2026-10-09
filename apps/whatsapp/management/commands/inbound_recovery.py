@@ -12,6 +12,7 @@ from apps.whatsapp import recovery
 from apps.whatsapp.models import InboundMessage
 
 LIST, INSPECT, RESEND, MARK_FAILED = "list", "inspect", "resend-reply", "mark-failed"
+MAX_LIST_LIMIT = 1000
 
 
 class Command(BaseCommand):
@@ -45,6 +46,10 @@ class Command(BaseCommand):
             raise CommandError(
                 f"--min-age-minutes deve ser >= {recovery.MIN_ALLOWED_AGE.seconds // 60}."
             )
+        if not 1 <= options["limit"] <= MAX_LIST_LIMIT:
+            raise CommandError(f"--limit deve estar entre 1 e {MAX_LIST_LIMIT}.")
+        if options["no_reply"] and operation != MARK_FAILED:
+            raise CommandError("--no-reply só se aplica a mark-failed.")
         if operation == LIST:
             if execute:
                 raise CommandError("list é somente leitura; --execute não se aplica.")

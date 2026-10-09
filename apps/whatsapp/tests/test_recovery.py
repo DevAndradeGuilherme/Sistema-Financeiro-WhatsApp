@@ -17,10 +17,15 @@ from django.db import connection, connections
 from django.utils import timezone
 
 from apps.transactions.models import Transaction, TransactionChange, TransactionType
-from apps.transactions.services import create_transaction, undo_last_change
+from apps.transactions.services import create_transaction, undo_last_change, update_transaction
 from apps.whatsapp import messages, recovery
 from apps.whatsapp.audio import handle_audio_message
-from apps.whatsapp.client import EvolutionHTTPError
+from apps.whatsapp.client import (
+    EvolutionConnectionError,
+    EvolutionHTTPError,
+    EvolutionResponseError,
+    EvolutionTimeoutError,
+)
 from apps.whatsapp.models import InboundMessage, ReceiptAttachment
 from apps.whatsapp.parsers import parse_evolution_event
 from apps.whatsapp.pipeline import handle_ready_message, idempotency_key
@@ -161,6 +166,33 @@ def test_ledger_change_by_origin_counts_as_effect(alice, catalog):
     diagnosis = recovery.inspect(record.pk)
     assert diagnosis.ledger_changes is True
     assert diagnosis.action == Action.REFUSE
+
+
+@pytest.mark.parametrize("operation", ["update", "undo"])
+def test_long_origin_still_counts_as_financial_effect(alice, catalog, operation):
+    """The audit field truncates long origins; recovery must query the persisted form."""
+    record = make_message(alice, provider_id="p" * 128)
+    record.instance = "i" * 100
+    record.save(update_fields=["instance", "updated_at"])
+    txn = create_transaction(
+        user=alice,
+        type=TransactionType.EXPENSE,
+        amount=Decimal("10"),
+        category=catalog["transporte"],
+        source="TEXT",
+    )
+    origin = idempotency_key(record)
+    assert len(origin) > recovery.ORIGIN_MAX_LENGTH
+    if operation == "update":
+        update_transaction(user=alice, transaction_id=txn.pk, amount="11", origin=origin)
+    else:
+        undo_last_change(user=alice, origin=origin)
+
+    diagnosis = recovery.inspect(record.pk)
+
+    assert diagnosis.ledger_changes is True
+    assert diagnosis.action == Action.REFUSE
+    assert diagnosis.reason == "EFFECT_WITHOUT_TERMINAL_STATUS"
 
 
 def test_receipt_row_on_stuck_image_is_ambiguous(alice):
@@ -409,9 +441,19 @@ def test_resend_is_at_most_once(alice, catalog, send, no_financial_pipeline):
     assert send.call_count == 1
 
 
-def test_resend_failure_keeps_message_recoverable(alice, catalog, send):
+@pytest.mark.parametrize(
+    "error",
+    [
+        EvolutionTimeoutError("timeout"),
+        EvolutionConnectionError("refused"),
+        EvolutionHTTPError(400, "bad request"),
+        EvolutionHTTPError(503, "down"),
+        EvolutionResponseError("invalid response"),
+    ],
+)
+def test_resend_failure_keeps_message_recoverable(alice, catalog, send, error):
     record, _ = committed_create(alice, catalog["transporte"])
-    send.side_effect = EvolutionHTTPError(503, "down")
+    send.side_effect = error
 
     result = recovery.resend_reply(record.pk, execute=True)
 
@@ -548,3 +590,18 @@ def test_command_rejects_execute_on_read_only_operations(alice):
         _output("inspect", str(record.pk), "--execute")
     with pytest.raises(CommandError, match="não encontrada"):
         _output("inspect", "999999")
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "1001"])
+def test_command_rejects_invalid_limit(limit):
+    with pytest.raises(CommandError, match="--limit deve estar entre 1 e 1000"):
+        _output("list", "--limit", limit)
+
+
+@pytest.mark.parametrize("operation", ["list", "inspect", "resend-reply"])
+def test_command_rejects_no_reply_for_other_operations(operation):
+    args = [operation]
+    if operation != "list":
+        args.append("999999")
+    with pytest.raises(CommandError, match="--no-reply só se aplica a mark-failed"):
+        _output(*args, "--no-reply")

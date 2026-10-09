@@ -106,7 +106,10 @@ class EvolutionClient:
             {"number": canonical.lstrip("+"), "text": text},
         )
         key = data.get("key") if isinstance(data.get("key"), dict) else {}
-        sent = SentMessage(provider_message_id=key.get("id"), status=data.get("status"))
+        provider_message_id = key.get("id")
+        if not isinstance(provider_message_id, str) or not provider_message_id:
+            raise EvolutionResponseError("Evolution API response has no message id.")
+        sent = SentMessage(provider_message_id=provider_message_id, status=data.get("status"))
         logger.info(
             "evolution.send_text instance=%s provider_message_id=%s status=%s",
             self.config.instance,

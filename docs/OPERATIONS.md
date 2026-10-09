@@ -47,7 +47,8 @@ python manage.py inbound_recovery resend-reply <id> [--execute]
 python manage.py inbound_recovery mark-failed <id> [--execute] [--no-reply] [--min-age-minutes 15]
 ```
 
-`<id>` é o ID interno de `InboundMessage` (coluna `id` do `list`/Django Admin). A saída mostra
+`--limit` aceita de 1 a 1000 (padrão 50). `<id>` é o ID interno de `InboundMessage` (coluna
+`id` do `list`/Django Admin). A saída mostra
 apenas: id, `provider_ref` parcial (`3EB0…0042`), tipo, status, códigos, intenção, timestamps,
 `user_id`, telefone mascarado (`+55319****0001`), existência de efeito financeiro e ação segura.
 Nunca mostra texto, transcrição, valores, imagem/base64, telefone completo ou segredos.
@@ -59,7 +60,8 @@ mais recentes primeiro. FAILED aparece para diagnóstico; em geral não exige a�
 ### 2.3 Diagnóstico e ações
 
 Efeito financeiro = existe `Transaction` com `idempotency_key = whatsapp:<instance>:<id>`
-(inclusive soft-deleted) **ou** `TransactionChange` com `origin` igual a essa chave.
+(inclusive soft-deleted) **ou** `TransactionChange` com `origin` correspondente a essa chave
+(respeitando o limite persistido do campo de auditoria).
 
 | Estado encontrado | Efeito | `safe_action` (`reason`) | O que fazer |
 |---|---|---|---|

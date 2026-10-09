@@ -49,6 +49,7 @@ REPLY_RESEND_PENDING = "REPLY_RESEND_PENDING"  # claimed; if it persists, delive
 REPLY_RESENT = "REPLY_RESENT"
 
 CREATE_INTENT = "CREATE_TRANSACTION"
+ORIGIN_MAX_LENGTH = TransactionChange._meta.get_field("origin").max_length
 
 
 class Action(StrEnum):
@@ -104,7 +105,10 @@ def diagnose(
 ) -> Diagnosis:
     key = idempotency_key(record)
     created = Transaction.objects.filter(idempotency_key=key).exists()
-    changes = TransactionChange.objects.filter(origin=key).exists()
+    # TransactionChange stores origins in a bounded audit field. Match the exact value written
+    # by transactions.services._record so long, but valid, provider identifiers cannot hide an
+    # UPDATE/UNDO effect from recovery.
+    changes = TransactionChange.objects.filter(origin=key[:ORIGIN_MAX_LENGTH]).exists()
     receipt = (
         ReceiptAttachment.objects.filter(inbound_message_id=record.pk)
         .values_list("status", flat=True)

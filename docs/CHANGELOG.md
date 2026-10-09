@@ -6,6 +6,15 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Fixed — auditoria independente do hardening operacional
+- Recovery passa a detectar UPDATE/UNDO mesmo quando a chave de origem ocupa o limite persistido
+  do campo de auditoria, evitando falso negativo de efeito financeiro.
+- Envio pela Evolution exige `key.id` na resposta de sucesso; resposta JSON incompleta permanece
+  diagnosticável como falha de envio em vez de encerrar o recovery como reenviado.
+- `inbound_recovery --limit` aceita somente 1–1000 e `--no-reply` é recusado fora de
+  `mark-failed`; combinações inválidas falham com erro operacional limpo.
+- Auditoria e decisão RC2 documentadas em `AUDIT-PREPROD-1.md`; sem migration.
+
 ### Added — hardening operacional de pré-produção
 - Readiness `GET /ready/`: `SELECT 1` no PostgreSQL com `statement_timeout` local de 2 s; `503`
   com corpo fixo quando o banco falha; sem OpenAI/Evolution, sem escrita, sem detalhes internos.

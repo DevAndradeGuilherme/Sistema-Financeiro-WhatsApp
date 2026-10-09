@@ -74,6 +74,8 @@ def test_readiness_statement_timeout_is_not_ready(client):
         response = client.get("/ready/")
     assert response.status_code == 503
     assert response.json() == {"status": "unavailable"}
+    assert connection.needs_rollback is False
+    assert client.get("/ready/").status_code == 200
 
 
 @pytest.mark.django_db

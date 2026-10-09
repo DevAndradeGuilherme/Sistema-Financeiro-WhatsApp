@@ -135,6 +135,15 @@ def test_non_json_response_raises():
         EvolutionClient().get_server_info()
 
 
+@pytest.mark.parametrize("body", [{}, {"key": {}}, {"key": {"id": ""}}])
+def test_send_text_rejects_response_without_message_id(body):
+    with (
+        mock.patch("apps.whatsapp.client.urlopen", fake_urlopen(body, [])),
+        pytest.raises(EvolutionResponseError, match="no message id"),
+    ):
+        EvolutionClient().send_text("+5531999990001", "Olá")
+
+
 def test_success_response_read_is_bounded():
     huge = b"{" + b"x" * (2 * 1024 * 1024)
     reads = []
