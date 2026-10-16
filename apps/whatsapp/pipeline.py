@@ -4,9 +4,16 @@
           → plan (Django validation) → atomic[lock message, effect, PROCESSED]
           → local reply → Evolution send_text (outside the transaction)
 
+A whole-message "sim"/"não" skips the model and answers the pending confirmation
+(``pending``) inside the same atomic commit.
+
 Invariants:
 - the financial effect and ``status=PROCESSED`` commit together; a message that is not READY
   under the row lock is never executed again;
+- per-user serialization: the commit locks the message row, then the sender's row
+  (``lock_user``), before re-reading the conversation (pending action, previous message) and
+  selecting any target, so concurrent messages of the same sender run one after the other and
+  selection and effect always see the same state;
 - a failed reply never re-runs the effect (status stays PROCESSED, ``error_code`` notes it);
 - AI failures create nothing and end in FAILED with a sanitized code.
 """
@@ -19,13 +26,14 @@ from django.utils import timezone
 
 from apps.ai.service import AIError, interpret_message
 from apps.transactions.models import TransactionSource
+from apps.transactions.services import lock_user
 from common.dates import today_local
 
-from . import actions, messages
+from . import actions, messages, pending
 from . import context as conversation
 from .client import EvolutionClient, EvolutionError
 from .models import InboundMessage, MessageType
-from .services import mark_failed
+from .services import idempotency_key, mark_failed
 
 logger = logging.getLogger(__name__)
 
@@ -34,28 +42,31 @@ _SOURCES = {MessageType.AUDIO: TransactionSource.AUDIO, MessageType.IMAGE: Trans
 REPLY_SEND_FAILED = "REPLY_SEND_FAILED"
 
 
-def idempotency_key(record: InboundMessage) -> str:
-    return f"whatsapp:{record.instance}:{record.provider_message_id}"
-
-
 def handle_ready_message(record: InboundMessage) -> None:
     if record.status != Status.READY or record.user_id is None:
         return
     today = today_local()
 
-    previous_query = conversation.get_previous_query(record.user)
-    context = actions.build_context(
-        today=today, timezone=settings.TIME_ZONE, previous_query=previous_query
-    )
-    try:
-        result = interpret_message(record.text, context, log_ref=record.provider_message_id)
-    except AIError as exc:
-        mark_failed(record, f"AI_{exc.code}")
-        send_reply(record, messages.TECHNICAL_ERROR)
-        return
+    answer = pending.decision(record.text)
+    if answer is None:
+        previous_query = conversation.get_previous_query(record.user)
+        context = actions.build_context(
+            today=today, timezone=settings.TIME_ZONE, previous_query=previous_query
+        )
+        try:
+            result = interpret_message(record.text, context, log_ref=record.provider_message_id)
+        except AIError as exc:
+            mark_failed(record, f"AI_{exc.code}")
+            send_reply(record, messages.TECHNICAL_ERROR)
+            return
 
     try:
-        outcome = _commit(record, result.interpretation, today, previous_query is not None)
+        if answer is not None:
+            # A whole-message "sim"/"não" never goes to the model: it can only answer the
+            # sender's own pending confirmation (or get "nothing pending").
+            outcome = commit_plan(record, actions.AnswerPlan(actions.ANSWER_INTENT, answer), today)
+        else:
+            outcome = _commit(record, result.interpretation, today, previous_query is not None)
     except Exception:
         # Unexpected failure (e.g. missing fallback category): the atomic block rolled back,
         # so there is no effect; the message becomes FAILED and the user gets a generic reply.
@@ -81,7 +92,9 @@ def _commit(
     record: InboundMessage, interpretation, today, has_context: bool
 ) -> "actions.Outcome | None":
     """Validate, then run the effect and mark PROCESSED in one transaction."""
-    plan = actions.plan(interpretation, user=record.user, today=today, has_context=has_context)
+    plan = actions.plan(
+        interpretation, user=record.user, today=today, has_context=has_context, text=record.text
+    )
     return commit_plan(record, plan, today)
 
 
@@ -111,9 +124,11 @@ def commit_plan(
                 locked.status,
             )
             return None
+        lock_user(locked.user)
         outcome = actions.execute(
             plan,
             user=locked.user,
+            message=locked,
             idempotency_key=idempotency_key(locked),
             today=today,
             source=_SOURCES.get(locked.message_type, TransactionSource.TEXT),

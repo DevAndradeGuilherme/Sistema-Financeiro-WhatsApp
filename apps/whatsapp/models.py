@@ -136,6 +136,64 @@ class ConversationContext(models.Model):
         return f"Contexto de {self.user_id} até {self.expires_at:%H:%M}"
 
 
+class PendingAction(models.Model):
+    """A multi-transaction mutation waiting for the sender's explicit confirmation ("sim").
+
+    One row per user (one-to-one): a new request replaces it. It is tied to the message that
+    asked (``inbound_message``): only the sender's very next message may answer it, so any
+    message in between — even one that failed before doing anything — invalidates it.
+    Holds the exact set of transaction ids presented, their count/total, the approved criteria
+    and a ``fingerprint`` of every candidate's relevant fields (to detect any change, even one
+    that keeps the total), and expires after a few minutes. Never grants access: on
+    confirmation the domain service re-checks ownership of every id.
+    """
+
+    class Action(models.TextChoices):
+        DELETE_MANY = "DELETE_MANY", "Excluir vários lançamentos"
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="pending_action",
+        verbose_name="usuário",
+    )
+    inbound_message = models.ForeignKey(
+        InboundMessage,
+        on_delete=models.CASCADE,
+        related_name="+",
+        verbose_name="mensagem do pedido",
+    )
+    action = models.CharField("ação", max_length=20, choices=Action.choices)
+    transaction_ids = models.JSONField("transações")
+    count = models.PositiveIntegerField("quantidade")
+    total = models.DecimalField("total", max_digits=14, decimal_places=2)
+    criteria = models.JSONField("critérios aprovados")
+    fingerprint = models.CharField("impressão dos candidatos", max_length=64)
+    origin = models.CharField("origem", max_length=200)
+    expires_at = models.DateTimeField("expira em")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "ação pendente de confirmação"
+        verbose_name_plural = "ações pendentes de confirmação"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(action__in=["DELETE_MANY"]),
+                name="pending_action_action_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(count__gt=0), name="pending_action_count_positive"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(fingerprint__regex=r"^[0-9a-f]{64}$"),
+                name="pending_action_fingerprint_sha256",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.action} de {self.user_id} até {self.expires_at:%H:%M}"
+
+
 class ReceiptAttachment(models.Model):
     """Technical metadata of a receipt/proof image received by WhatsApp.
 

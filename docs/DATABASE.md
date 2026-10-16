@@ -123,6 +123,29 @@ queryset method nomeado (`.active()`).
 | `expires_at` | timestamptz | `now + CONVERSATION_CONTEXT_TTL_MINUTES` |
 | `updated_at` | timestamptz | |
 
+### `whatsapp.PendingAction` (2026-10-15)
+
+Confirmação de mutação em massa ("apague todas as entradas" → "sim"). Sem Redis: uma linha por
+usuário, substituída a cada novo pedido e apagada ao ser respondida ou por qualquer outra mensagem.
+Só a mensagem do remetente **imediatamente seguinte** a `inbound_message` pode respondê-la.
+
+| Campo | Tipo | Regras |
+|---|---|---|
+| `user` | OneToOne User | `CASCADE`; uma pendência por usuário |
+| `inbound_message` | FK InboundMessage | mensagem que fez o pedido (`CASCADE`; índice da FK para o cascade) — 2026-10-15, migration `0007` |
+| `action` | varchar | `DELETE_MANY`; `CHECK` |
+| `transaction_ids` | jsonb | ids exatos apresentados ao usuário (só do próprio remetente) |
+| `count`, `total` | integer, numeric(14,2) | quantidade (> 0, `CHECK`) e total apresentados; revalidados na confirmação |
+| `criteria` | jsonb | critérios aprovados (tipo, ids de catálogo, descrição, valor, datas); os ids precisam continuar casando — `0007` |
+| `fingerprint` | varchar(64) | SHA-256 de (id, dono, tipo, valor, categoria, subcategoria, descrição, data) de cada candidato; `CHECK ^[0-9a-f]{64}$` — `0007` |
+| `origin` | varchar | mensagem que fez o pedido (`whatsapp:<instância>:<id>`) |
+| `expires_at` | timestamptz | `now + 10 min` |
+| `created_at` | timestamptz | |
+
+Migration `0007_pendingaction_snapshot`: apaga pendências existentes (transitórias, sem
+impressão para validar) antes de adicionar as colunas `NOT NULL`; reversível (remove as colunas;
+pendências apagadas não voltam, já teriam expirado).
+
 ### `whatsapp.ReceiptAttachment` (V1.4)
 
 | Campo | Tipo | Regras |

@@ -55,6 +55,8 @@ Revisores (Codex) devem usar este documento como checklist.
   buscada só entre as do remetente; editar/desfazer exigem ser o dono (`can_modify_transaction`);
   o contexto de follow-up é por usuário, expira e só contém parâmetros validados. Testes:
   "edita o gasto da Maria", "desfaz o gasto do João", contexto de outro usuário.
+  Desde 2026-10-15: o nome de outro membro no **texto** bloqueia edição/remoção mesmo que a IA o
+  omita; seleção do alvo sob lock do remetente; "sim" só vale como mensagem seguinte ao pedido.
 - V1.2: ADMIN da família = **somente leitura** sobre terceiros. `ReadScope` só é criado após
   `can_view_family` (papel atual, revalidado a cada mensagem); membro resolvido por nome apenas
   dentro da família, autorização antes da resolução; ambiguidade nunca escolhe; snapshot

@@ -1,6 +1,7 @@
 """Inbound message service: idempotent reservation, filtering and sender identification.
 
-Flow (docs/WHATSAPP.md): reserve the provider id (unique row) → classify → READY or IGNORED
+Flow (docs/WHATSAPP.md): reserve the provider id (unique row, already attributed to the
+registered sender for conversation ordering) → classify → READY or IGNORED
 (audio from a known user stays RECEIVED until transcribed, see ``audio.py``).
 A duplicate delivery stops at the reservation and never runs the rest again — including the
 audio download and transcription.
@@ -66,15 +67,32 @@ def receive_message(message: NormalizedMessage) -> InboundResult:
     return InboundResult(record=record, duplicate=False)
 
 
+def idempotency_key(record: InboundMessage) -> str:
+    """Origin of every financial effect of this message (Transaction key, change origin)."""
+    return f"whatsapp:{record.instance}:{record.provider_message_id}"
+
+
 def mark_failed(record: InboundMessage, error_code: str) -> bool:
     """RECEIVED/READY → FAILED (conditional). Returns whether this call made the transition."""
     return _mark_failed(record, error_code)
 
 
 def _reserve(message: NormalizedMessage) -> tuple[InboundMessage, bool]:
-    """Insert the idempotency row. The unique constraint decides concurrent races."""
+    """Insert the idempotency row. The unique constraint decides concurrent races.
+
+    The sender is attached here, in the same INSERT, before any slow step (classification,
+    model, media): the conversation order (pending confirmation, correction context) is the
+    order of the sender's ``InboundMessage`` pks, so a reserved message must never be invisible
+    to that check. This is identity for **ordering** only; authorization is ``_classify``
+    (inactive users stay IGNORED; unknown senders get no user at all). The sender's row is
+    locked like ``lock_user`` does, so a later message already committing under that lock
+    waits for this reservation to be committed (no INSERT→COMMIT window).
+    """
+    user = _sender_for_ordering(message)
     try:
         with transaction.atomic():
+            if user is not None:
+                User.objects.select_for_update(no_key=True).filter(pk=user.pk).first()
             record = InboundMessage.objects.create(
                 provider=message.provider,
                 instance=message.instance,
@@ -82,6 +100,8 @@ def _reserve(message: NormalizedMessage) -> tuple[InboundMessage, bool]:
                 message_type=message.message_type,
                 provider_timestamp=message.timestamp,
                 status=Status.RECEIVED,
+                sender_phone=message.sender_phone if user is not None else "",
+                user=user,
             )
         return record, True
     except IntegrityError:
@@ -91,6 +111,16 @@ def _reserve(message: NormalizedMessage) -> tuple[InboundMessage, bool]:
             provider_message_id=message.provider_message_id,
         )
         return existing, False
+
+
+def _sender_for_ordering(message: NormalizedMessage) -> User | None:
+    """The registered sender of a direct message (same pre-filters as ``_classify``), or None.
+
+    Own echoes (fromMe), groups and broadcasts never join a sender's conversation order.
+    """
+    if message.from_me or message.is_group or message.is_broadcast or not message.sender_phone:
+        return None
+    return User.objects.filter(phone_number=message.sender_phone).first()
 
 
 def _classify(record: InboundMessage, message: NormalizedMessage) -> None:

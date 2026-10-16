@@ -179,9 +179,15 @@ def test_audio_update_and_undo(client, alice, catalog, ai, evolution, download, 
     txn.refresh_from_db()
     assert txn.amount == Decimal("15.00")
 
-    transcribe.say("desfazer")
+    transcribe.say("desfazer")  # identifies nothing: same rule as typed text
     ai.set(interp(intent="UNDO_TRANSACTION"))
     post_audio(client, message_id="A3")
+    txn.refresh_from_db()
+    assert txn.amount == Decimal("15.00")
+    assert not TransactionChange.objects.filter(action="UNDO").exists()
+
+    transcribe.say("desfaz a última alteração")
+    post_audio(client, message_id="A4")
     txn.refresh_from_db()
     assert txn.amount == Decimal("10.00")
     assert TransactionChange.objects.filter(action="UNDO").count() == 1

@@ -6,17 +6,27 @@ Django is the authority here:
 - the user is always the authenticated sender passed by the caller — never a model field;
 - family reads (V1.2) go through ``apps.transactions.scopes``: the model's ``scope`` /
   ``target_member_name`` are hints; authorization (ADMIN of the *current* family, member
-  resolved by name inside that family) happens at execution time; mutations are owner-only;
-- the transaction to edit is chosen by Django in the sender's own data (never by an id
-  from the model); ambiguous references change nothing;
+  resolved by name inside that family) happens at execution time; mutations are owner-only
+  and a creation always belongs to the sender (a named person is never its owner); an
+  edit/removal whose text names another family member is refused, whatever the model says;
+- the transaction to edit/remove is chosen by Django in the sender's own data (never by an
+  id from the model), combining every criterion stated with AND; a criterion the text states
+  but the model dropped or contradicted (``hints``) → asks; 0 candidates → "não encontrei",
+  2+ → asks; "the latest" only when the text says "último"/"acabei de" — a bare "desfazer"
+  identifies nothing and changes nothing; several on purpose ("todas as entradas") →
+  confirmation of the exact set first; a correction ("errado, foram 80") never creates and only
+  edits the effect of the sender's immediately previous message;
 - totals, rankings, groupings and percentages come only from
   ``apps.transactions.selectors`` (PostgreSQL / Decimal).
 
-``plan`` only reads; ``execute`` performs the effect and must run inside the caller's
-atomic block (see ``pipeline.handle_ready_message``).
+``plan`` only reads and validates *criteria* (never picks a transaction). ``execute`` runs
+inside the caller's atomic block **after the sender's lock** (see ``pipeline.commit_plan``):
+it re-reads the conversation (pending action, previous message), selects the candidates with
+``SELECT ... FOR UPDATE`` and performs the effect, so selection and effect see the same state.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -34,7 +44,7 @@ from apps.ai.contract import (
 )
 from apps.categories.models import Category, Subcategory
 from apps.categories.selectors import get_fallback_category, list_active_categories
-from apps.families.selectors import member_display_name
+from apps.families.selectors import member_display_name, normalize_name, other_member_names
 from apps.transactions import analytics, scopes, selectors
 from apps.transactions.models import (
     Transaction,
@@ -45,19 +55,27 @@ from apps.transactions.models import (
 from apps.transactions.services import (
     UNSET,
     create_transaction,
+    soft_delete_transaction,
+    soft_delete_transactions,
     undo_last_change,
     update_transaction,
 )
+from common.formatting import describe_day, describe_period
 from common.money import InvalidAmount, to_decimal
 
-from . import messages
+from . import context as conversation
+from . import hints, messages, pending
+from .models import InboundMessage
 
 logger = logging.getLogger(__name__)
 
 MAX_DESCRIPTION = 255
 DEFAULT_LIMIT = 5
 MAX_LIMIT = 10
-REFERENCE_WINDOW_DAYS = 90  # how far back "o gasto de gasolina" is searched
+REFERENCE_WINDOW_DAYS = 90  # how far back "o gasto de gasolina" is searched (no date given)
+MAX_CANDIDATES_SHOWN = 3  # ambiguous reference: candidates listed in the reply
+MAX_BULK = 50  # most transactions a single confirmed request may remove
+ANSWER_INTENT = "CONFIRM_ACTION"  # "sim"/"não" to a pending action (never sent to the model)
 
 
 def build_context(
@@ -103,6 +121,8 @@ class CreatePlan:
     subcategory: Subcategory | None
     description: str
     transaction_date: date | None
+    # Text is only an amount + filler ("80", "foi 80"): refused right after a mutation.
+    elliptic: bool = False
 
 
 @dataclass(frozen=True)
@@ -150,18 +170,127 @@ class QueryPlan:
 
 
 @dataclass(frozen=True)
+class _Target:
+    """Validated description of the wanted transaction(s). ``filters`` = find_transactions.
+
+    Every filter is combined with AND; none is ever dropped to find something.
+    """
+
+    filters: dict
+    last: bool = False
+    bulk: bool = False
+    # At least one criterion is proven by the text itself (type word, number, date, catalog
+    # item, description words), not only proposed by the model.
+    anchored: bool = False
+    # Numbers of the text that are neither a criterion nor a new value ("foi 80, não 100").
+    leftover_amounts: frozenset = frozenset()
+    # Some criterion other than the type is proven by the text: a type alone ("a entrada")
+    # never identifies the one transaction to remove.
+    identified: bool = False
+
+    @property
+    def identifying(self) -> set:
+        return self.filters.keys() - {"type"}
+
+    @property
+    def dated(self) -> bool:
+        return bool({"transaction_date", "start_date", "end_date"} & self.filters.keys())
+
+    def criteria(self) -> dict:
+        """JSON form of the approved filters (stored with a pending confirmation)."""
+        data = {}
+        for name, value in self.filters.items():
+            if isinstance(value, Category | Subcategory):
+                data[f"{name}_id"] = value.pk
+            elif isinstance(value, date):
+                data[name] = value.isoformat()
+            elif isinstance(value, Decimal):
+                data[name] = str(value)
+            else:
+                data[name] = value
+        return data
+
+    @classmethod
+    def from_criteria(cls, data: dict) -> "_Target | None":
+        """Inverse of ``criteria``; None if something no longer resolves (→ stale)."""
+        filters: dict = {}
+        for name, value in data.items():
+            if name == "category_id":
+                filters["category"] = Category.objects.filter(pk=value).first()
+            elif name == "subcategory_id":
+                filters["subcategory"] = Subcategory.objects.filter(pk=value).first()
+            elif name in ("transaction_date", "start_date", "end_date"):
+                filters[name] = _parse_date(value)
+            elif name == "amount":
+                filters[name] = Decimal(value)
+            elif name in ("type", "description"):
+                filters[name] = value
+            else:
+                return None
+        if any(value is None for value in filters.values()):
+            return None
+        return cls(filters=filters, bulk=True)
+
+
+@dataclass(frozen=True)
 class UpdatePlan:
+    """Edit one of the sender's transactions, chosen at execution under the sender's lock.
+
+    ``target`` None = context-only correction ("errado, foram 80"): only the effect of the
+    sender's immediately previous message, of ``wanted_type`` if the text names one.
+    """
+
     intent: str
-    transaction_id: object
+    target: _Target | None
     changes: dict = field(default_factory=dict)  # only fields to change (service kwargs)
+    wanted_type: str | None = None
+    previous_amount: Decimal | None = None  # "foi 80, não 100": the context must be 100 now
 
 
 @dataclass(frozen=True)
 class UndoPlan:
+    """Undo the sender's last action (stack, ``undo_last_change``).
+
+    Only when the text itself says so ("desfaz a última alteração"); never a bare "desfazer".
+    """
+
     intent: str
 
 
-Plan = ReplyPlan | CreatePlan | QueryPlan | UpdatePlan | UndoPlan
+@dataclass(frozen=True)
+class DeletePlan:
+    """Soft delete exactly one transaction, resolved at execution in the sender's own data."""
+
+    intent: str
+    target: _Target
+
+
+@dataclass(frozen=True)
+class BulkDeletePlan:
+    """Several transactions: nothing is deleted now; the exact set waits for "sim"."""
+
+    intent: str
+    target: _Target
+
+
+@dataclass(frozen=True)
+class AnswerPlan:
+    """A whole-message "sim"/"não" (``pending.CONFIRM``/``DENY``) to the pending action."""
+
+    intent: str
+    decision: str
+
+
+Plan = (
+    ReplyPlan
+    | CreatePlan
+    | QueryPlan
+    | UpdatePlan
+    | UndoPlan
+    | DeletePlan
+    | BulkDeletePlan
+    | AnswerPlan
+)
 
 
 @dataclass(frozen=True)
@@ -174,44 +303,92 @@ class Outcome:
 
 
 def plan(
-    interpretation: Interpretation, *, user: User, today: date, has_context: bool = False
+    interpretation: Interpretation,
+    *,
+    user: User,
+    today: date,
+    has_context: bool = False,
+    text: str = "",
 ) -> Plan:
     i = interpretation
     if i.follow_up and not has_context:
         return ReplyPlan(i.intent, messages.NO_CONTEXT, "NO_CONTEXT")
     if i.intent == "HELP":
         return ReplyPlan(i.intent, messages.HELP)
-    if i.intent in _MUTATIONS and _names_someone_else(i):
-        # Owner-only by design (no delegated create/update/undo). The services also enforce
-        # it; this gives a clear reply instead of silently acting on the sender's own data.
-        reply = (
-            messages.OWN_ACCOUNT_ONLY
-            if i.intent == "CREATE_TRANSACTION"
-            else (messages.OWN_CHANGES_ONLY)
-        )
-        return ReplyPlan(i.intent, reply, "FORBIDDEN_OTHER_ACCOUNT")
+    said = hints.read(text)
     if i.intent == "CREATE_TRANSACTION":
-        return _plan_create(i)
+        # The owner is always the sender (``execute`` receives it; CreatePlan has no owner).
+        # ``scope``/``target_member_name`` are ignored here: a name is usually a beneficiary
+        # ("curso da Ana"). An explicit booking for someone else is refused, not silently
+        # recorded for the sender — flagged by the model or detected in the text by Django.
+        if i.for_another_person or _books_for_member(text, user):
+            return ReplyPlan(i.intent, messages.OWN_ACCOUNT_ONLY, "FORBIDDEN_OTHER_ACCOUNT")
+        if said.mutation == "REMOVE":
+            # "Remova a entrada de 50" proposed as CREATE: an explicit order to remove is
+            # never a new registration, whatever the model said (incompatible intent).
+            return ReplyPlan(i.intent, messages.REMOVE_NOT_CREATED, "TARGET_UNCLEAR")
+        if i.correction or said.correction or said.mutation == "EDIT":
+            # "Errado, recebi somente 1.050,41", "desculpa, foram 80", "altere o valor": an
+            # amount in a correction is never a new transaction (model or Django flagged it).
+            return ReplyPlan(i.intent, messages.CORRECTION_NOT_CREATED, "CORRECTION_NOT_CREATED")
+        return _plan_create(i, elliptic=said.elliptic)
+    if i.intent in _OWNER_EDITS and (_names_someone_else(i) or _mentions_member(text, user)):
+        # Owner-only by design (no delegated update/undo), also for a family ADMIN. A member
+        # named in the text blocks the mutation even if the model left the name out: acting on
+        # the sender's own look-alike transaction ("a entrada de 77 da Maria") would be wrong.
+        return ReplyPlan(i.intent, messages.OWN_CHANGES_ONLY, "FORBIDDEN_OTHER_ACCOUNT")
     if i.intent == "QUERY_TRANSACTIONS":
         return _plan_query(i, today)
     if i.intent == "UPDATE_TRANSACTION":
-        return _plan_update(i, user, today)
+        return _plan_update(i, said, text, today)
     if i.intent == "UNDO_TRANSACTION":
-        return UndoPlan(i.intent)
+        return _plan_undo(i, said, text, today)
     return ReplyPlan(i.intent, messages.NOT_UNDERSTOOD, "NOT_UNDERSTOOD")
 
 
-_MUTATIONS = ("CREATE_TRANSACTION", "UPDATE_TRANSACTION", "UNDO_TRANSACTION")
+_OWNER_EDITS = ("UPDATE_TRANSACTION", "UNDO_TRANSACTION")
 
 
 def _names_someone_else(i: Interpretation) -> bool:
     return i.scope in (scopes.FAMILY, scopes.FAMILY_MEMBER) or bool(i.target_member_name)
 
 
+def _mentions_member(text: str, user: User) -> bool:
+    """The text names another member of the sender's family (first/full name, accent-free)."""
+    names = other_member_names(user=user) if text else set()
+    return bool(names) and bool(hints.find_terms(text, names))
+
+
+# Imperative "record it" verbs (registra, lança, anota...), never first-person past ("comprei").
+_RECORD_VERB = r"\b(?:registr|lanc|anot|adicion|coloc|inclu)(?:a|e|ar|ir)\b"
+_THIRD_PERSON = r"(?:gastou|recebeu|pagou|comprou|ganhou|transferiu)"
+
+
+def _books_for_member(text: str, user: User) -> bool:
+    """Deterministic backstop for ``for_another_person``: the text explicitly books money to
+    another member of the sender's family ("registra 100 para a Ana", "lança na conta da Ana",
+    "Ana gastou 100"). A beneficiary mention ("curso da Ana", "presente pra Ana") never matches.
+    """
+    names = other_member_names(user=user) if text else set()
+    if not names:
+        return False
+    alt = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+    name = rf"(?:[ao]\s+)?(?:{alt})\b"
+    normalized = normalize_name(text)
+    return any(
+        re.search(pattern, normalized)
+        for pattern in (
+            rf"{_RECORD_VERB}.*\b(?:para|pra|pro)\s+{name}",
+            rf"\bconta\s+d[aeo]\s+{name}",
+            rf"\b(?:{alt})\s+{_THIRD_PERSON}\b",
+        )
+    )
+
+
 # --- CREATE ------------------------------------------------------------------------------
 
 
-def _plan_create(i: Interpretation) -> Plan:
+def _plan_create(i: Interpretation, *, elliptic: bool = False) -> Plan:
     if i.transaction_type not in TransactionType.values:
         return ReplyPlan(i.intent, messages.NOT_UNDERSTOOD, "NOT_UNDERSTOOD")
     if i.amount is None:
@@ -236,6 +413,7 @@ def _plan_create(i: Interpretation) -> Plan:
         subcategory=subcategory,
         description=(i.description or "")[:MAX_DESCRIPTION],
         transaction_date=transaction_date,
+        elliptic=elliptic,
     )
 
 
@@ -474,10 +652,10 @@ def _resolve_for_query(category_id, subcategory_id, transaction_type):
     return category, subcategory
 
 
-# --- UPDATE ------------------------------------------------------------------------------
+# --- UPDATE / UNDO: criteria (validated here, resolved at execution) ---------------------
 
 
-def _plan_update(i: Interpretation, user: User, today: date) -> Plan:
+def _plan_update(i: Interpretation, said: hints.TextHints, text: str, today: date) -> Plan:
     updates = i.updates
     if updates is None or updates.is_empty():
         return ReplyPlan(i.intent, messages.NOTHING_TO_UPDATE, "NOTHING_TO_UPDATE")
@@ -510,57 +688,412 @@ def _plan_update(i: Interpretation, user: User, today: date) -> Plan:
             changes.pop("subcategory")  # inconsistent proposal: keep the explicit category
         changes["category"] = category
 
-    target = _resolve_reference(i.reference, user, today)
+    # Numbers/dates/items in an UPDATE text are either criteria or new values: each one must
+    # be in the reference or in the updates (``_read_target``), never silently ignored.
+    target = _read_target(i.reference, said, text, today, removing=False, changes=changes)
     if isinstance(target, ReplyPlan):
         return ReplyPlan(i.intent, target.reply, target.code)
-    return UpdatePlan(i.intent, target.pk, changes)
+    unclear = ReplyPlan(i.intent, messages.CORRECTION_TARGET_UNCLEAR, "TARGET_UNCLEAR")
+    if target.bulk:
+        return ReplyPlan(i.intent, messages.BULK_UPDATE_UNSUPPORTED, "BULK_UPDATE_UNSUPPORTED")
+    if target.last or target.identifying:
+        # A type alone ("a entrada") never identifies the transaction, and a criterion only the
+        # model proposed (an amount, date, item or description the text does not state as the
+        # target) can never be the reason one is chosen: "último" or a criterion beyond the
+        # type proven by the text is required.
+        if target.leftover_amounts or not (target.last or target.identified):
+            return unclear
+        return UpdatePlan(i.intent, target, changes)
+    # No criteria ("errado, foram 80", "muda para 12"): only the effect of the sender's
+    # immediately previous message (checked at execution, under the lock). The new value must
+    # be in the text; a second number can only be the value being corrected ("não 100").
+    if len(target.leftover_amounts) > 1 or not _changes_anchored(said, text, changes):
+        return unclear
+    return UpdatePlan(
+        i.intent,
+        None,
+        changes,
+        wanted_type=target.filters.get("type"),
+        previous_amount=next(iter(target.leftover_amounts), None),
+    )
 
 
-def _resolve_reference(
-    reference: TransactionReference | None, user: User, today: date
-) -> Transaction | ReplyPlan:
-    """Pick the sender's transaction described by the reference. Never guesses."""
-    reference = reference or TransactionReference(last=True)
-    criteria: dict = {}
+def _plan_undo(i: Interpretation, said: hints.TextHints, text: str, today: date) -> Plan:
+    target = _read_target(i.reference, said, text, today, removing=True)
+    if isinstance(target, ReplyPlan):
+        return ReplyPlan(i.intent, target.reply, target.code)
+    if target.leftover_amounts:
+        return ReplyPlan(i.intent, messages.REMOVE_TARGET_UNCLEAR, "TARGET_UNCLEAR")
+    if target.bulk:
+        if not (target.filters and target.anchored):
+            return ReplyPlan(i.intent, messages.BULK_NEEDS_CRITERIA, "BULK_NEEDS_CRITERIA")
+        return BulkDeletePlan(i.intent, target)
+    if target.last or (target.identifying and target.identified):
+        return DeletePlan(i.intent, target)
+    if said.last and said.action:
+        # "Desfaz a última alteração": the text itself asks for the last action (stack).
+        return UndoPlan(i.intent)
+    if said.type is not None:
+        # "Desfaça a entrada", "apague o gasto": a type alone identifies nothing, even when
+        # only one such transaction exists → ask which one.
+        return ReplyPlan(i.intent, messages.remove_which(said.type), "TARGET_UNCLEAR")
+    # "desfazer", "remove", "apaga": nothing in the text identifies a transaction → nothing
+    # changes, whatever the model proposed (``last``, a type, a description...).
+    return ReplyPlan(i.intent, messages.REMOVE_TARGET_UNCLEAR, "TARGET_UNCLEAR")
+
+
+def _read_target(
+    reference: TransactionReference | None,
+    said: hints.TextHints,
+    text: str,
+    today: date,
+    *,
+    removing: bool,
+    changes: dict | None = None,
+) -> _Target | ReplyPlan:
+    """Every criterion of the model's reference, checked against what the text itself says.
+
+    All criteria are kept and combined with AND (a description is kept next to a category).
+    A type named in the text is enforced. An amount, date or catalog item stated in the text
+    but missing from (or contradicted by) the proposal — reference, plus ``changes`` for an
+    UPDATE — means the model lost a filter → ask, instead of degrading to a broader search.
+    An amount or date *criterion* the text does not show is refused too. The caller decides
+    with ``anchored`` (some criterion is proven by the text) and ``leftover_amounts``.
+    """
+    reference = reference or TransactionReference()
+    changes = changes or {}
+    unclear = ReplyPlan(
+        "",
+        messages.REMOVE_TARGET_UNCLEAR if removing else messages.CORRECTION_TARGET_UNCLEAR,
+        "TARGET_UNCLEAR",
+    )
+    filters: dict = {}
     if reference.transaction_type in TransactionType.values:
-        criteria["type"] = reference.transaction_type
+        filters["type"] = reference.transaction_type
     if reference.category_id is not None:
-        criteria["category"] = Category.objects.filter(pk=reference.category_id).first()
+        filters["category"] = Category.objects.filter(pk=reference.category_id).first()
     if reference.subcategory_id is not None:
-        criteria["subcategory"] = Subcategory.objects.filter(pk=reference.subcategory_id).first()
-    if reference.description and not ({"category", "subcategory"} & criteria.keys()):
-        # The model often repeats the item ("gasolina") as description; when a catalog
-        # criterion exists it already identifies the item, and free text would be too strict.
-        criteria["description"] = reference.description[:MAX_DESCRIPTION]
+        filters["subcategory"] = Subcategory.objects.filter(pk=reference.subcategory_id).first()
+    if reference.description and reference.description.strip():
+        filters["description"] = reference.description.strip()[:MAX_DESCRIPTION]
     if reference.amount is not None:
         try:
-            criteria["amount"] = to_decimal(reference.amount)
+            filters["amount"] = to_decimal(reference.amount)
         except InvalidAmount:
-            criteria["amount"] = None
+            filters["amount"] = None
     if reference.transaction_date is not None:
-        criteria["transaction_date"] = _parse_date(reference.transaction_date)
+        filters["transaction_date"] = _parse_date(reference.transaction_date)
+    period = _reference_period(reference)
+    if isinstance(period, ReplyPlan):
+        return period
+    filters.update(period)
 
     # A criterion the model sent but that does not resolve can only mean "not found".
-    if any(value is None for value in criteria.values()):
+    if any(value is None for value in filters.values()):
         return ReplyPlan("", messages.NOT_FOUND, "NOT_FOUND")
 
-    pick_latest = reference.last or not (criteria.keys() - {"type"})
-    candidates = selectors.find_transactions(
-        user=user,
-        since=today - timedelta(days=REFERENCE_WINDOW_DAYS),
-        limit=1 if pick_latest else 2,
-        **criteria,
+    if said.type is not None and filters.setdefault("type", said.type) != said.type:
+        return unclear
+    # Every date/period of the text, resolved ("dia 5" → that day, "outubro" → that month).
+    # One that cannot be resolved safely → ask; never "the text has some date, accept any".
+    when = hints.temporal(text, today)
+    reference_spans = _reference_spans(said, today)
+    if when.unresolved or reference_spans is None:
+        return unclear
+    items = _catalog_mentions(text)
+    leftover = _leftover_amounts(said, filters, changes)
+    if (
+        leftover is None
+        or not _dates_match(when.spans, reference_spans, filters, changes, today)
+        or not _items_match(items, filters, changes)
+    ):
+        return unclear
+
+    bulk = reference.all or said.bulk
+    # "o último" only when the text says so, and never to break a tie between explicit
+    # criteria: a model "last=true" alone cannot turn a search into "the latest one".
+    # "a última alteração" (no criteria) is the undo stack, not "the latest transaction".
+    last = (
+        said.last
+        and not bulk
+        and not (said.action and not filters)
+        and (reference.last or not (filters.keys() - {"type"}))
     )
-    if not candidates:
-        return ReplyPlan("", messages.NOT_FOUND, "NOT_FOUND")
-    if len(candidates) > 1:
-        is_income = {"INCOME": True, "EXPENSE": False}.get(criteria.get("type"))
-        return ReplyPlan(
-            "",
-            messages.ambiguous(is_income=is_income, description=reference.description),
-            "AMBIGUOUS_REFERENCE",
+    dated_by_text = bool(when.spans) and (
+        removing or bool(reference_spans) or not changes.get("transaction_date")
+    )
+    proven = _proven(said, text, items, filters, changes, dated_by_text=dated_by_text)
+    if last and filters.keys() - {"type"} - proven:
+        # "a última entrada" + a filter only the model proposed would pick "the latest one
+        # matching the model", not the one the text names → ask.
+        return unclear
+    return _Target(
+        filters=filters,
+        last=last,
+        bulk=bulk,
+        anchored=_anchored(said, text, items, filters),
+        leftover_amounts=leftover,
+        identified=bool(proven - {"type"}),
+    )
+
+
+def _leftover_amounts(said: hints.TextHints, filters: dict, changes: dict) -> frozenset | None:
+    """Numbers of the text that are neither the amount criterion nor the new amount.
+
+    None (→ ask) when a number of the text is unreadable or when the amount criterion is not a
+    number the text shows (spelled-out numbers cannot be checked, so they are accepted).
+    """
+    if any(amount is None for amount in said.amounts):
+        return None
+    if said.amounts and filters.get("amount") not in (None, *said.amounts):
+        return None
+    proposed = {filters.get("amount"), changes.get("amount")} - {None}
+    return frozenset(amount for amount in said.amounts if amount not in proposed)
+
+
+def _anchored(said: hints.TextHints, text: str, items: dict, filters: dict) -> bool:
+    """Some criterion of ``filters`` is proven by the text, not only proposed by the model."""
+    if said.type is not None and filters.get("type") == said.type:
+        return True
+    if filters.get("amount") is not None and filters["amount"] in said.amounts:
+        return True
+    if said.date and {"transaction_date", "start_date", "end_date"} & filters.keys():
+        return True  # ``_dates_match`` already proved explicit days agree
+    if _names_item(items, filters):
+        return True
+    return _words_in_text(filters.get("description"), text)
+
+
+_DATE_FILTERS = frozenset({"transaction_date", "start_date", "end_date"})
+
+
+def _proven(
+    said: hints.TextHints,
+    text: str,
+    items: dict,
+    filters: dict,
+    changes: dict,
+    *,
+    dated_by_text: bool,
+) -> set:
+    """Names of the filters the text itself proves *as a criterion* (not only as a new value).
+
+    Only these can be the reason a transaction is selected; the rest, proposed by the model,
+    may at most narrow a set the text already identifies. A token of the text used as the new
+    value ("altere a entrada para 50", "... para bônus") does not also prove the criterion.
+    """
+    proven = set()
+    if said.type is not None and filters.get("type") == said.type:
+        proven.add("type")
+    amount = filters.get("amount")
+    if amount is not None:
+        used_as_new = 1 if changes.get("amount") == amount else 0
+        if said.amounts.count(amount) > used_as_new:
+            proven.add("amount")
+    if dated_by_text:
+        proven |= _DATE_FILTERS & filters.keys()  # ``_dates_match`` proved they fit the text
+    for kind in ("category", "subcategory"):
+        chosen = filters.get(kind)
+        if chosen is None or (changes.get(kind) is not None and changes[kind].pk == chosen.pk):
+            continue
+        if any(k == kind and pk == chosen.pk for k, pk in items.values()):
+            proven.add(kind)
+    described = hints.descriptive_words(filters.get("description"))
+    if (described & hints.descriptive_words(text)) - hints.descriptive_words(
+        changes.get("description")
+    ):
+        proven.add("description")
+    return proven
+
+
+def _changes_anchored(said: hints.TextHints, text: str, changes: dict) -> bool:
+    """Some new value of a context-only correction is stated in the text."""
+    if changes.get("amount") is not None and changes["amount"] in said.amounts:
+        return True
+    if said.date and changes.get("transaction_date"):
+        return True
+    if _names_item(_catalog_mentions(text), changes):
+        return True
+    return _words_in_text(changes.get("description"), text)
+
+
+def _names_item(items: dict, values: dict) -> bool:
+    for kind, pk in items.values():
+        chosen = values.get(kind)
+        if chosen is not None and chosen.pk == pk:
+            return True
+    return False
+
+
+def _words_in_text(phrase: str | None, text: str) -> bool:
+    normalized = hints.normalize(text)
+    return any(word in normalized for word in hints.normalize(phrase).split() if len(word) >= 3)
+
+
+def _reference_spans(said: hints.TextHints, today: date) -> list | None:
+    """Spans of the dates that identify the transaction ("a entrada do dia 5"); None if one
+    of them cannot be resolved."""
+    spans = []
+    for fragment in said.reference_dates:
+        found = hints.temporal(fragment, today)
+        if found.unresolved or not found.spans:
+            return None
+        spans.extend(found.spans)
+    return spans
+
+
+def _target_window(filters: dict, today: date) -> tuple[date, date] | None:
+    """The ``transaction_date`` range the proposed criteria select (AND), or None if undated.
+    A missing start is unbounded (``find_transactions`` reads only ``<= end``)."""
+    if not _DATE_FILTERS & filters.keys():
+        return None
+    point, start, end = (
+        filters.get(name) for name in ("transaction_date", "start_date", "end_date")
+    )
+    lows = [d for d in (point, start) if d]
+    highs = [d for d in (point, end) if d] or [max(start, today)]
+    return (max(lows) if lows else date.min), min(highs)
+
+
+def _within(window: tuple[date, date], span: tuple[date, date]) -> bool:
+    return span[0] <= window[0] and window[1] <= span[1]
+
+
+def _dates_match(
+    spans: tuple, reference_spans: list, filters: dict, changes: dict, today: date
+) -> bool:
+    """The proposal's dates must be the ones the text states — compared by value.
+
+    - a date criterion must lie inside a date/period of the text ("dia 5" → that day only);
+    - every date/period of the text must be the criterion or the new date (UPDATE): the
+      target window inside it, or the new date in it — never silently ignored;
+    - a date that identifies the transaction ("a entrada do dia 5", "o gasto de ontem era
+      40") must be the criterion, not only the new date.
+    """
+    window = _target_window(filters, today)
+    new_date = changes.get("transaction_date")
+    if window is not None and not any(_within(window, span) for span in spans):
+        return False
+    for span in spans:
+        target_here = window is not None and _within(window, span)
+        new_here = new_date is not None and span[0] <= new_date <= span[1]
+        if not (target_here or new_here):
+            return False
+    return not reference_spans or (
+        window is not None and all(_within(window, span) for span in reference_spans)
+    )
+
+
+def _catalog_mentions(text: str) -> dict[str, tuple[str, int]]:
+    """Unambiguous catalog terms named in the text → ("category"|"subcategory", id)."""
+    terms = _catalog_terms()
+    return {term: terms[term] for term in hints.find_terms(text, terms)} if terms else {}
+
+
+def _items_match(items: dict, filters: dict, changes: dict) -> bool:
+    """A catalog category/subcategory named in the text must be the proposed one (criterion or
+    new value) or appear in a proposed description. Only unambiguous catalog terms count."""
+    if not items:
+        return True
+    subcategories = [s for s in (filters.get("subcategory"), changes.get("subcategory")) if s]
+    categories = {c.pk for c in (filters.get("category"), changes.get("category")) if c}
+    categories |= {s.category_id for s in subcategories}
+    described = " ".join(d for d in (filters.get("description"), changes.get("description")) if d)
+    for term, (kind, pk) in items.items():
+        if hints.find_terms(described, [term]):
+            continue
+        if kind == "category" and pk in categories:
+            continue
+        if kind == "subcategory" and pk in {s.pk for s in subcategories}:
+            continue
+        return False
+    return True
+
+
+def _catalog_terms() -> dict[str, tuple[str, int]]:
+    """Normalized active category/subcategory names and aliases → ("category"|"subcategory",
+    id), keeping only terms that are reliable: one catalog entry, 3+ letters, no digits, not a
+    type word ("compras")."""
+    entries: dict[str, set] = {}
+    for category in list_active_categories():
+        for term in (category.name, *category.aliases):
+            entries.setdefault(hints.normalize(term), set()).add(("category", category.pk))
+        for sub in category.active_subcategories:
+            for term in (sub.name, *sub.aliases):
+                entries.setdefault(hints.normalize(term), set()).add(("subcategory", sub.pk))
+    return {
+        term: next(iter(found))
+        for term, found in entries.items()
+        if len(found) == 1
+        and len(term) >= 3
+        and not any(char.isdigit() for char in term)
+        and not hints.names_a_type(term)
+    }
+
+
+def _reference_period(reference: TransactionReference) -> dict | ReplyPlan:
+    period = {}
+    for name in ("start_date", "end_date"):
+        raw = getattr(reference, name)
+        if raw is not None:
+            period[name] = _parse_date(raw)
+            if period[name] is None:
+                return ReplyPlan("", messages.INVALID_DATE, "INVALID_DATE")
+    start, end = period.get("start_date"), period.get("end_date")
+    if start and end and start > end:
+        return ReplyPlan("", messages.INVALID_PERIOD, "INVALID_PERIOD")
+    return period
+
+
+def _pick(target: _Target, user: User, today: date, *, verb: str) -> Transaction | ReplyPlan:
+    """Exactly one of the sender's transactions matching ALL criteria, or a reply.
+
+    Runs at execution, after the sender's lock; candidates are locked (``FOR UPDATE``).
+    """
+    if target.last:
+        # Explicitly relative: the most recently registered (created_at), of the stated type.
+        rows = selectors.find_transactions(user=user, limit=1, for_update=True, **target.filters)
+        return rows[0] if rows else ReplyPlan("", messages.NOT_FOUND, "NOT_FOUND")
+    since = None if target.dated else today - timedelta(days=REFERENCE_WINDOW_DAYS)
+    rows = selectors.find_transactions(
+        user=user, since=since, limit=MAX_CANDIDATES_SHOWN + 1, for_update=True, **target.filters
+    )
+    if not rows:
+        return ReplyPlan("", _not_found(target, today), "NOT_FOUND")
+    if len(rows) > 1:
+        candidates = [
+            (t.type == TransactionType.INCOME, t.amount, t.transaction_date, _item_label(t))
+            for t in rows[:MAX_CANDIDATES_SHOWN]
+        ]
+        reply = messages.ambiguous_target(
+            candidates, more=len(rows) > MAX_CANDIDATES_SHOWN, verb=verb
         )
-    return candidates[0]
+        return ReplyPlan("", reply, "AMBIGUOUS_REFERENCE")
+    return rows[0]
+
+
+def _not_found(target: _Target, today: date) -> str:
+    if not target.identifying:
+        return messages.NOT_FOUND
+    return messages.target_not_found(target.filters.get("type"), **_details(target, today))
+
+
+def _details(target: _Target, today: date) -> dict:
+    f = target.filters
+    item = f.get("subcategory") or f.get("category")
+    when = None
+    if f.get("transaction_date"):
+        day = f["transaction_date"]
+        when = describe_day(day, today) if day >= today - timedelta(days=1) else f"em {day:%d/%m}"
+    elif f.get("start_date") or f.get("end_date"):
+        start = f.get("start_date") or f["end_date"]
+        when = describe_period(start, f.get("end_date") or max(start, today), today)
+    return {
+        "amount": f.get("amount"),
+        "category": item.name if item else None,
+        "description": f.get("description"),
+        "when": when,
+    }
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -577,25 +1110,49 @@ def execute(
     plan_: Plan,
     *,
     user: User,
+    message: InboundMessage,
     idempotency_key: str,
     today: date,
     source: str = TransactionSource.TEXT,
 ) -> Outcome:
-    """Run the effect for ``user`` (the authenticated sender). Call inside transaction.atomic."""
+    """Run the effect for ``user`` (the authenticated sender of ``message``).
+
+    Call inside transaction.atomic, after ``lock_user(user)`` (``pipeline.commit_plan``):
+    conversation state is re-read and targets are selected here, under that lock.
+    """
+    if isinstance(plan_, AnswerPlan):
+        return _execute_answer(plan_, user, message, idempotency_key)
+    # Any other message is a new request: an unanswered confirmation is cancelled, so a later
+    # "sim" can never confirm an old question (``pending.answers`` enforces it as well).
+    pending.clear(user)
     if isinstance(plan_, ReplyPlan):
         return Outcome(plan_.intent, plan_.reply, plan_.code)
     if isinstance(plan_, CreatePlan):
-        return _execute_create(plan_, user, idempotency_key, today, source)
+        return _execute_create(plan_, user, message, idempotency_key, today, source)
     if isinstance(plan_, UpdatePlan):
-        return _execute_update(plan_, user, idempotency_key)
+        return _execute_update(plan_, user, message, idempotency_key, today)
     if isinstance(plan_, UndoPlan):
         return _execute_undo(plan_, user, idempotency_key)
+    if isinstance(plan_, DeletePlan):
+        return _execute_delete(plan_, user, idempotency_key, today)
+    if isinstance(plan_, BulkDeletePlan):
+        return _execute_ask(plan_, user, message, idempotency_key, today)
     return _execute_query(plan_, user, today)
 
 
 def _execute_create(
-    p: CreatePlan, user: User, idempotency_key: str, today: date, source: str
+    p: CreatePlan,
+    user: User,
+    message: InboundMessage,
+    idempotency_key: str,
+    today: date,
+    source: str,
 ) -> Outcome:
+    if p.elliptic and conversation.recent_mutation(message):
+        # "80" / "ok, 80" after a recent registration/edit is most likely a correction, with no
+        # evidence of a new transaction: create nothing and ask which one — also when other
+        # messages came in between (the link is broken, the intent to correct is not).
+        return Outcome(p.intent, messages.CORRECTION_NOT_CREATED, "CORRECTION_NOT_CREATED")
     try:
         txn = create_transaction(
             user=user,
@@ -625,11 +1182,27 @@ def created_reply(txn: Transaction) -> str:
     )
 
 
-def _execute_update(p: UpdatePlan, user: User, idempotency_key: str) -> Outcome:
+def _execute_update(
+    p: UpdatePlan, user: User, message: InboundMessage, idempotency_key: str, today: date
+) -> Outcome:
+    if p.target is None:
+        txn = conversation.correction_target(message)
+        if (
+            txn is None
+            or (p.wanted_type is not None and txn.type != p.wanted_type)
+            or (p.previous_amount is not None and txn.amount != p.previous_amount)
+        ):
+            return Outcome(
+                p.intent, messages.CORRECTION_TARGET_UNCLEAR, "CORRECTION_TARGET_UNCLEAR"
+            )
+    else:
+        txn = _pick(p.target, user, today, verb="corrigir")
+        if isinstance(txn, ReplyPlan):
+            return Outcome(p.intent, txn.reply, txn.code)
     kwargs = {name: p.changes.get(name, UNSET) for name in _UPDATABLE}
     try:
         result = update_transaction(
-            user=user, transaction_id=p.transaction_id, origin=idempotency_key, **kwargs
+            user=user, transaction_id=txn.pk, origin=idempotency_key, **kwargs
         )
     except PermissionDenied:
         return Outcome(p.intent, messages.NOT_FOUND, "NOT_FOUND")
@@ -669,6 +1242,93 @@ def _execute_undo(p: UndoPlan, user: User, idempotency_key: str) -> Outcome:
             is_income=txn.type == TransactionType.INCOME, amount=txn.amount, where=_where(txn)
         )
     return Outcome(p.intent, reply, transaction=txn)
+
+
+def _execute_delete(p: DeletePlan, user: User, idempotency_key: str, today: date) -> Outcome:
+    txn = _pick(p.target, user, today, verb="remover")
+    if isinstance(txn, ReplyPlan):
+        return Outcome(p.intent, txn.reply, txn.code)
+    try:
+        txn = soft_delete_transaction(actor=user, transaction_id=txn.pk, origin=idempotency_key)
+    except PermissionDenied:
+        return Outcome(p.intent, messages.NOT_FOUND, "NOT_FOUND")
+    reply = messages.transaction_removed(
+        is_income=txn.type == TransactionType.INCOME,
+        amount=txn.amount,
+        day=txn.transaction_date,
+        where=_where(txn),
+    )
+    return Outcome(p.intent, reply, transaction=txn)
+
+
+def _execute_ask(
+    p: BulkDeletePlan, user: User, message: InboundMessage, idempotency_key: str, today: date
+) -> Outcome:
+    """Resolve the whole set now (locked); delete nothing until "sim" confirms this exact set."""
+    rows = selectors.find_transactions(
+        user=user, limit=MAX_BULK + 1, for_update=True, **p.target.filters
+    )
+    if not rows:
+        return Outcome(p.intent, _not_found(p.target, today), "NOT_FOUND")
+    if len(rows) > MAX_BULK:
+        return Outcome(p.intent, messages.bulk_too_many(limit=MAX_BULK), "BULK_TOO_MANY")
+    summary = selectors.summarize_own_transactions(user=user, transaction_ids=[t.pk for t in rows])
+    pending.ask(
+        user,
+        message=message,
+        action=pending.PendingAction.Action.DELETE_MANY,
+        transactions=rows,
+        total=summary.total,
+        criteria=p.target.criteria(),
+        origin=idempotency_key,
+    )
+    reply = messages.confirm_bulk_delete(
+        type_=p.target.filters.get("type"),
+        count=summary.count,
+        total=summary.total,
+        **_details(p.target, today),
+    )
+    return Outcome(p.intent, reply, "CONFIRMATION_REQUIRED")
+
+
+def _execute_answer(
+    p: AnswerPlan, user: User, message: InboundMessage, idempotency_key: str
+) -> Outcome:
+    """Apply or cancel the pending action. It is consumed whatever the answer or outcome.
+
+    Valid only as the sender's very next message after the question; on "sim" every presented
+    transaction must still be the sender's, active, unchanged (fingerprint) and match the
+    approved criteria — otherwise nothing is deleted.
+    """
+    item = pending.take(user)
+    if item is None or not pending.answers(item, message):
+        return Outcome(p.intent, messages.NO_PENDING_ACTION, "NO_PENDING_ACTION")
+    if pending.is_expired(item):
+        return Outcome(p.intent, messages.CONFIRMATION_EXPIRED, "CONFIRMATION_EXPIRED")
+    if p.decision != pending.CONFIRM:
+        return Outcome(p.intent, messages.CONFIRMATION_CANCELLED, "CONFIRMATION_CANCELLED")
+    stale = Outcome(p.intent, messages.CONFIRMATION_STALE, "CONFIRMATION_STALE")
+    ids = item.transaction_ids
+    target = _Target.from_criteria(item.criteria)
+    if target is None:
+        return stale
+    rows = selectors.find_transactions(
+        user=user, transaction_ids=ids, limit=len(ids) + 1, for_update=True, **target.filters
+    )
+    if len(rows) != len(ids) or pending.fingerprint(rows) != item.fingerprint:
+        return stale
+    summary = selectors.summarize_own_transactions(user=user, transaction_ids=ids)
+    if (summary.count, summary.total) != (item.count, item.total):
+        return stale
+    try:
+        deleted = soft_delete_transactions(actor=user, transaction_ids=ids, origin=idempotency_key)
+    except (PermissionDenied, ValidationError):
+        return stale
+    types = {txn.type for txn in deleted}
+    reply = messages.bulk_deleted(
+        type_=types.pop() if len(types) == 1 else None, count=len(deleted), total=summary.total
+    )
+    return Outcome(p.intent, reply)
 
 
 def _authorize(p: QueryPlan, user: User) -> scopes.ReadScope | Outcome:

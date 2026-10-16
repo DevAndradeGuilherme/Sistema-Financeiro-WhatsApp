@@ -351,8 +351,7 @@ def test_admin_alone_in_family(client, alice, catalog, ai, evolution, make_trans
                 intent="CREATE_TRANSACTION",
                 transaction_type="EXPENSE",
                 amount="50",
-                scope="FAMILY_MEMBER",
-                target_member_name="Maria",
+                for_another_person=True,
             ),
             messages.OWN_ACCOUNT_ONLY,
         ),
@@ -387,7 +386,7 @@ def test_admin_cannot_mutate_for_others(client, alice, ledger, ai, evolution, pr
 def test_admin_update_never_reaches_member_even_without_scope(
     client, alice, maria, ledger, ai, evolution
 ):
-    """If the model misses the name, Django still only searches the sender's transactions."""
+    """If the model misses the name, Django reads it in the text and refuses (audit P1#3)."""
     maria_ids = set(Transaction.objects.filter(user=maria).values_list("pk", "amount"))
     ai.set(
         interp(
@@ -398,7 +397,7 @@ def test_admin_update_never_reaches_member_even_without_scope(
     )
     record = deliver(client, "muda o gasto do mercado da Maria para 1")
     record.refresh_from_db()
-    assert record.error_code == "NOT_FOUND"
+    assert record.error_code == "FORBIDDEN_OTHER_ACCOUNT"
     assert set(Transaction.objects.filter(user=maria).values_list("pk", "amount")) == maria_ids
 
 

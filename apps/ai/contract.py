@@ -4,13 +4,18 @@ Plain dataclasses, no domain imports. The model output is an untrusted *proposal
 only checks its shape; Django (apps.whatsapp.actions) validates meaning and authorizes.
 There are no user ids, phones or permission fields. ``scope``/``target_member_name`` only
 describe whose money the message talks about; Django authorizes (apps.transactions.scopes).
+``for_another_person`` only flags a CREATE that explicitly books money to someone else; Django
+refuses it. A creation is always owned by the sender, whatever the model returns.
+``reference`` (UPDATE/UNDO) only *describes* the target; Django searches the sender's own data,
+detects ambiguity and requires confirmation for several transactions. ``correction`` marks a
+message that corrects something said before; Django never turns it into a creation.
 """
 
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-CONTRACT_VERSION = "v1.5"
+CONTRACT_VERSION = "v1.5.2"
 
 INTENTS = (
     "CREATE_TRANSACTION",
@@ -63,6 +68,9 @@ REFERENCE_SCHEMA = _object(
         "description": _nullable("string"),
         "amount": _nullable("string"),
         "transaction_date": _nullable("string"),
+        "start_date": _nullable("string"),
+        "end_date": _nullable("string"),
+        "all": {"type": "boolean"},
     }
 )
 
@@ -80,6 +88,8 @@ OUTPUT_SCHEMA: dict = _object(
     {
         "intent": {"type": "string", "enum": list(INTENTS)},
         "follow_up": {"type": "boolean"},
+        "for_another_person": {"type": "boolean"},
+        "correction": {"type": "boolean"},
         "scope": _nullable("string", enum=[*SCOPES, None]),
         "target_member_name": _nullable("string"),
         "months": _nullable("integer"),
@@ -140,7 +150,11 @@ class InterpretationContext:
 
 @dataclass(frozen=True)
 class TransactionReference:
-    """How the user identifies an existing transaction. Resolved by Django in the database."""
+    """How the user identifies an existing transaction. Resolved by Django in the database.
+
+    ``start_date``/``end_date``: period of ``transaction_date`` ("os gastos de outubro").
+    ``all``: the user explicitly means every matching transaction ("todas as entradas").
+    """
 
     last: bool = False
     transaction_type: str | None = None
@@ -149,6 +163,9 @@ class TransactionReference:
     description: str | None = None
     amount: str | None = None
     transaction_date: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    all: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,6 +203,8 @@ class Interpretation:
     months: int | None = None
     trend_metric: str | None = None
     trend_direction: str | None = None
+    for_another_person: bool = False
+    correction: bool = False
 
     def __repr__(self) -> str:  # keep amounts/descriptions out of logs and tracebacks
         return f"Interpretation(intent={self.intent!r}, query_kind={self.query_kind!r})"
@@ -237,6 +256,9 @@ def _reference(data: Any) -> TransactionReference | None:
         description=r.text("description"),
         amount=r.text("amount"),
         transaction_date=r.text("transaction_date"),
+        start_date=r.text("start_date"),
+        end_date=r.text("end_date"),
+        all=r.boolean("all"),
     )
 
 
@@ -261,6 +283,8 @@ def parse_output(data: Any) -> Interpretation:
     return Interpretation(
         intent=intent,
         follow_up=r.boolean("follow_up"),
+        for_another_person=r.boolean("for_another_person"),
+        correction=r.boolean("correction"),
         scope=r.text("scope", SCOPES),
         target_member_name=r.text("target_member_name"),
         months=r.integer("months"),

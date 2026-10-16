@@ -2,7 +2,7 @@
 
 from .contract import CatalogCategory, InterpretationContext
 
-PROMPT_VERSION = "2026-10-07.4"
+PROMPT_VERSION = "2026-10-15.3"
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -21,15 +21,25 @@ PERIOD_SUMMARY ("resumo", "como foi meu mês", "% da renda gasta"); MONTHLY_TREN
 month or monthly average; months if stated; trend_metric EXPENSE/INCOME/BALANCE); \
 CATEGORY_TREND (per-category change vs previous period, periods as COMPARE; \
 trend_direction INCREASE "aumentaram"/DECREASE "gastei menos"/ALL).
-- UPDATE_TRANSACTION: correct a transaction. reference = how it is identified (last=true \
-for "último" or no criteria); updates = only the new values.
-- UNDO_TRANSACTION: "desfazer", "cancela o último".
+- UPDATE_TRANSACTION: correct a transaction; also corrections of what was said before \
+("errado, foram 80", "na verdade foi 950", "era 50", "recebi somente 1.050,41"): \
+correction=true, never CREATE. updates = only the new values.
+- UNDO_TRANSACTION: undo/remove/delete ("desfaça o último lançamento", "apaga a entrada de \
+50", "remova os gastos de ontem", "desfazer").
+reference (UPDATE/UNDO): how the target is identified, keeping EVERY criterion stated: \
+transaction_type ("entrada"/"receita" = INCOME, "gasto" = EXPENSE), amount, transaction_date \
+or start/end_date (a period), category/subcategory, description. last=true only if the text \
+says "último"/"acabei de". all=true if several are meant ("todas", "os gastos de ontem"). \
+Never drop a criterion; reference null when nothing identifies it ("desfazer", \
+"errado, foram 80").
 - HELP: how to use the bot. UNKNOWN: anything else.
 
 scope (whose money; you only classify, the app decides permissions): SELF (default, \
 "meu"); FAMILY ("minha família", "a gente", "gastamos", RANKING); FAMILY_MEMBER (one named \
-person; target_member_name as written, e.g. "Maria"). Also for any intent naming another \
-person ("registre 50 para a Maria").
+person; target_member_name as written, e.g. "Maria"). CREATE: always SELF, name null.
+for_another_person (CREATE only): true if asked to record it for someone else ("registra \
+100 para a Maria", "na conta do João", "Maria gastou 100"); false if the sender paid, even \
+for someone ("curso da Maria", "presente pra Maria"): name stays in description.
 
 Rules:
 - amount: decimal string with dot, no currency ("R$ 10,50" -> "10.50", "dez reais" -> \
@@ -47,7 +57,9 @@ month to today; "hoje" = today; "ontem" = yesterday. null if no period is mentio
 - follow_up: true only if the message depends on the previous query ("e mês passado?", \
 "e transporte?"); then return the complete query: previous query + what changed. If no \
 previous query is given, still use QUERY_TRANSACTIONS with follow_up=true.
-- Fields that do not apply to the intent (reference/updates unless UPDATE): null.
+- correction: true only for a correction of something said before (any intent).
+- Fields that do not apply to the intent (reference unless UPDATE/UNDO, updates unless \
+UPDATE): null.
 
 Catalog:
 {catalog}"""

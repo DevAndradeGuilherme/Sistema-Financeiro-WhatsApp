@@ -62,8 +62,138 @@ IMAGE_DOWNLOAD_FAILED = "Não consegui processar essa imagem. Tente enviar novam
 ADMIN_ONLY = "Essa consulta está disponível apenas para o administrador da família."
 NO_FAMILY = "Você ainda não faz parte de uma família cadastrada."
 MEMBER_NOT_FOUND = "Não encontrei essa pessoa na sua família."
-OWN_ACCOUNT_ONLY = "Só consigo registrar lançamentos na sua própria conta."
-OWN_CHANGES_ONLY = "Só consigo alterar lançamentos feitos por você."
+OWN_ACCOUNT_ONLY = (
+    "Só consigo registrar lançamentos na sua própria conta. Se foi você quem pagou, mande por "
+    'exemplo "paguei 100 do mercado". Se foi outra pessoa, ela mesma precisa registrar.'
+)
+OWN_CHANGES_ONLY = (
+    "Só consigo alterar ou remover lançamentos feitos por você. Lançamentos de outro membro "
+    "da família não podem ser alterados nem removidos por você, então não mudei nada."
+)
+
+# --- Target selection, corrections and confirmations (UPDATE/UNDO) ---------------------------
+
+CORRECTION_TARGET_UNCLEAR = (
+    "Qual lançamento você quer corrigir? Me diga o valor e a data, por exemplo: "
+    "'a entrada de 50 do dia 07/10 era 40'."
+)
+CORRECTION_NOT_CREATED = (
+    "Parece que você quer corrigir um lançamento, então não registrei nada novo. "
+    + CORRECTION_TARGET_UNCLEAR
+)
+REMOVE_TARGET_UNCLEAR = (
+    "Não consegui identificar com segurança qual lançamento você quer remover, então não "
+    "removi nada. Me diga o valor e a data, por exemplo: 'remova a entrada de 50 do dia 07/10' "
+    "ou 'desfaça o último lançamento'."
+)
+REMOVE_NOT_CREATED = (
+    "Parece que você quer remover um lançamento, então não registrei nada novo. "
+    + REMOVE_TARGET_UNCLEAR
+)
+BULK_UPDATE_UNSUPPORTED = (
+    "Por segurança, só altero um lançamento por vez. Me diga qual, por exemplo: "
+    "'o gasto de 50 do dia 07/10 era 40'."
+)
+BULK_NEEDS_CRITERIA = (
+    "Para remover vários lançamentos de uma vez, me diga o tipo, o período ou a categoria. "
+    "Por exemplo: 'apague as entradas de outubro'."
+)
+NO_PENDING_ACTION = "Não há nenhuma ação aguardando confirmação."
+CONFIRMATION_CANCELLED = "Tudo bem, não removi nada."
+CONFIRMATION_EXPIRED = (
+    "Esse pedido de confirmação expirou, então não removi nada. Se ainda quiser, peça de novo."
+)
+CONFIRMATION_STALE = (
+    "Esses lançamentos mudaram desde o pedido, então não removi nada. Se ainda quiser, "
+    "peça de novo."
+)
+CONFIRM_HINT = "Responda SIM para confirmar ou NÃO para cancelar."
+
+_SINGULAR = {"INCOME": "entrada", "EXPENSE": "gasto", None: "lançamento"}
+_PLURAL = {"INCOME": "receitas", "EXPENSE": "gastos", None: "lançamentos"}
+
+
+def _target_details(
+    *,
+    amount: Decimal | None = None,
+    category: str | None = None,
+    description: str | None = None,
+    when: str | None = None,
+) -> str:
+    text = f" de {format_brl(amount)}" if amount is not None else ""
+    if category:
+        text += f" em {category}"
+    if description:
+        text += f" com “{description}”"
+    if when:
+        text += f" {when}"
+    return text
+
+
+def target_not_found(type_: str | None, **details) -> str:
+    article = "uma" if type_ == "INCOME" else "um"
+    return f"Não encontrei {article} {_SINGULAR[type_]}{_target_details(**details)}."
+
+
+def remove_which(type_: str) -> str:
+    """Only a type was given ("desfaça a entrada"): it identifies nothing."""
+    noun = _SINGULAR[type_]
+    which = "Qual entrada" if type_ == "INCOME" else "Qual gasto"
+    last = "a última entrada" if type_ == "INCOME" else "o último gasto"
+    return (
+        f"{which} você quer remover? Não removi nada. Me diga o valor ou a data, por exemplo: "
+        f"'desfaça {'a' if type_ == 'INCOME' else 'o'} {noun} de 50 de ontem' ou "
+        f"'desfaça {last}'."
+    )
+
+
+def transaction_removed(*, is_income: bool, amount: Decimal, day: date, where: str) -> str:
+    noun = "a entrada" if is_income else "o gasto"
+    return f"Pronto, removi {noun} de {format_brl(amount)} de {day:%d/%m} ({where})."
+
+
+def ambiguous_target(candidates: list[tuple[bool, Decimal, date, str]], *, more: bool, verb: str):
+    """``candidates``: (is_income, amount, transaction_date, label). ``verb``: remover/corrigir."""
+    rows = [
+        f"• {'Entrada' if income else 'Gasto'} de {format_brl(amount)} em {day:%d/%m} ({label})"
+        for income, amount, day, label in candidates
+    ]
+    if more:
+        rows.append("• …e outros")
+    return _lines(
+        f"Encontrei mais de uma transação correspondente. Qual delas você quer {verb}?",
+        rows,
+        "Me diga o valor, a data ou a descrição para eu saber qual é.",
+    )
+
+
+def confirm_bulk_delete(*, type_: str | None, count: int, total: Decimal, **details) -> str:
+    feminine = type_ == "INCOME"
+    if count == 1:
+        noun = {"INCOME": "receita", "EXPENSE": "gasto", None: "lançamento"}[type_]
+        found = f"Encontrei 1 {noun}{_target_details(**details)}, de {format_brl(total)}."
+        question = f"Deseja realmente {'removê-la' if feminine else 'removê-lo'}?"
+    else:
+        found = (
+            f"Encontrei {count} {_PLURAL[type_]}{_target_details(**details)}, "
+            f"totalizando {format_brl(total)}."
+        )
+        question = f"Deseja realmente remover {'todas' if feminine else 'todos'}?"
+    return f"{found} {question} {CONFIRM_HINT}"
+
+
+def bulk_too_many(*, limit: int) -> str:
+    return (
+        f"Encontrei mais de {limit} lançamentos, mais do que consigo remover de uma vez. "
+        "Pode restringir por período ou categoria?"
+    )
+
+
+def bulk_deleted(*, type_: str | None, count: int, total: Decimal) -> str:
+    if count == 1:
+        return f"Pronto, removi 1 {_SINGULAR[type_]} de {format_brl(total)}."
+    return f"Pronto, removi {count} {_PLURAL[type_]}, totalizando {format_brl(total)}."
+
 
 # ``who`` in the functions below: None = the sender ("Você"), FAMILY = the whole family,
 # any other string = a family member's display name.
@@ -191,17 +321,6 @@ def balance(
 
 def where(category: str, subcategory: str | None) -> str:
     return f"{category} · {subcategory}" if subcategory else category
-
-
-def ambiguous(*, is_income: bool | None, description: str | None) -> str:
-    noun = {True: "receita parecida", False: "gasto parecido", None: "lançamento parecido"}[
-        is_income
-    ]
-    about = f" com {description}" if description else ""
-    return (
-        f"Encontrei mais de um{'a' if is_income else ''} {noun}{about}. "
-        "Me diga o valor ou a data para eu saber qual é."
-    )
 
 
 def transaction_updated(

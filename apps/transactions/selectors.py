@@ -11,14 +11,14 @@ from datetime import date
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
-from django.db.models import DecimalField, Q, QuerySet, Sum, Value
+from django.db.models import Count, DecimalField, Q, QuerySet, Sum, Value
 from django.db.models.functions import Coalesce
 
 from apps.accounts.models import User
 from apps.categories.models import Category, Subcategory
 from common.money import percent
 
-from .models import Transaction, TransactionType
+from .models import Transaction, TransactionChange, TransactionType
 from .scopes import FAMILY, ReadScope, own
 
 ZERO = Decimal("0.00")
@@ -237,26 +237,44 @@ def compare_periods(
     )
 
 
+MAX_FIND_LIMIT = 100
+
+
 def find_transactions(
     *,
     user: User,
-    since: date,
+    since: date | None = None,
     type: str | None = None,
     category: Category | None = None,
     subcategory: Subcategory | None = None,
     description: str | None = None,
     amount: Decimal | None = None,
     transaction_date: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    transaction_ids=None,
     limit: int = 2,
+    for_update: bool = False,
 ) -> list[Transaction]:
     """Candidates for a reference like "o gasto de 50 no mercado", newest registered first.
 
-    Only the user's OWN active transactions (used to pick what to edit: never a scope),
-    with ``transaction_date >= since``. Callers use ``limit=2`` to detect ambiguity.
+    Only the user's OWN active transactions (used to pick what to edit: never a scope).
+    Every given filter is applied together (AND; none is ever dropped to find something);
+    dates always refer to ``transaction_date``, never ``created_at``. ``since`` is an optional
+    lower bound of ``transaction_date``; ``transaction_ids`` restricts to those ids.
+    Callers ask for one more than they accept to detect ambiguity. ``for_update`` locks the
+    returned rows (must run inside the caller's atomic block, after the user lock).
     """
-    if not 1 <= limit <= MAX_TOP_LIMIT:
-        raise ValidationError(f"limit deve estar entre 1 e {MAX_TOP_LIMIT}.")
-    qs = _base_queryset(user, None).filter(transaction_date__gte=since)
+    if not 1 <= limit <= MAX_FIND_LIMIT:
+        raise ValidationError(f"limit deve estar entre 1 e {MAX_FIND_LIMIT}.")
+    _validate_period(start_date, end_date, required=False)
+    qs = _base_queryset(user, None)
+    if since is not None:
+        qs = qs.filter(transaction_date__gte=since)
+    if start_date is not None:
+        qs = qs.filter(transaction_date__gte=start_date)
+    if end_date is not None:
+        qs = qs.filter(transaction_date__lte=end_date)
     if type is not None:
         _validate_type(type)
         qs = qs.filter(type=type)
@@ -270,7 +288,42 @@ def find_transactions(
         qs = qs.filter(amount=amount)
     if transaction_date is not None:
         qs = qs.filter(transaction_date=transaction_date)
+    if transaction_ids is not None:
+        qs = qs.filter(pk__in=list(transaction_ids))
+    if for_update:
+        qs = qs.select_for_update(of=("self",))
     return list(qs.select_related("category", "subcategory").order_by("-created_at", "-id")[:limit])
+
+
+@dataclass(frozen=True)
+class SelectionSummary:
+    count: int
+    total: Decimal
+
+
+def summarize_own_transactions(*, user: User, transaction_ids) -> SelectionSummary:
+    """Count and sum (in PostgreSQL) of the user's OWN active transactions among the ids."""
+    result = (
+        _base_queryset(user, None)
+        .filter(pk__in=list(transaction_ids))
+        .aggregate(
+            count=Count("pk"),
+            total=Coalesce(Sum("amount"), Value(ZERO), output_field=_MONEY),
+        )
+    )
+    return SelectionSummary(count=result["count"], total=result["total"])
+
+
+def last_change(*, user: User, since) -> TransactionChange | None:
+    """The user's most recent change (any action) on their own transactions after ``since``."""
+    return (
+        TransactionChange.objects.filter(
+            user=_require_user(user), transaction__user=user, created_at__gt=since
+        )
+        .select_related("transaction")
+        .order_by("-created_at", "-id")
+        .first()
+    )
 
 
 def _require_user(user: User | None) -> User:

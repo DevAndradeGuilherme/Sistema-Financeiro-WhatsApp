@@ -6,6 +6,98 @@ schema) ou decisão arquitetural deve gerar entrada em `Unreleased`.
 
 ## [Unreleased]
 
+### Fixed — auditoria final do patch de mutações (4 × P1)
+- P1#1: datas do texto ("dia 5", "outubro", "outubro de 2026", dd/mm, hoje/ontem/
+  anteontem, dia da semana, esse mês/semana/ano, mês/semana/ano passado) agora são resolvidas
+  em intervalos (`hints.temporal`) e o alvo proposto pela IA precisa caber nelas; antes bastava
+  o texto "ter alguma data" ("apague a entrada do dia 5" podia apagar a do dia 7).
+  Expressão não resolvível → `TARGET_UNCLEAR`.
+- P1#2: UPDATE só seleciona por "último" ou critério além do tipo comprovado pelo texto como
+  alvo; valor/data/categoria/subcategoria/descrição inventados pela IA (ou o próprio valor novo)
+  não escolhem mais a transação. "Último" + filtro não comprovado → `TARGET_UNCLEAR` (vale
+  também para UNDO).
+- P1#3: `InboundMessage` passa a ser atribuída ao remetente cadastrado na própria reserva
+  (mesmo `INSERT`, com lock da linha do usuário); uma mensagem reservada e ainda não
+  classificada não fica mais invisível para a sequência de "sim"/correção. Autorização
+  inalterada (classificação continua decidindo; desconhecido sem `user`; fromMe/grupo fora).
+- P1#4: "80"/"ok, 80" após um CREATE/UPDATE recente cujo vínculo foi interrompido (ajuda,
+  consulta, falha, mídia inválida) não cria lançamento (`CORRECTION_NOT_CREATED`); TTL continua
+  sendo o limite.
+
+### Fixed — riscos residuais de mutação (guards determinísticos)
+- Ordem explícita de remoção ("remova", "apague", "exclua", "delete", "desfaça", "cancele o
+  lançamento") classificada como `CREATE` pela IA criava um lançamento: agora nada é criado
+  (`TARGET_UNCLEAR`). Verbo explícito de edição + `CREATE` → `CORRECTION_NOT_CREATED`.
+- Formas coloquiais "tira", "retira", "estorna" (e infinitivos) aplicadas a um lançamento
+  ("tira esse gasto de 30", "estorna o gasto de 50") entram no mesmo guard; sem o objeto
+  financeiro ("tira-gosto", "tirar uma tatuagem", "retirei 200 no caixa") nada muda.
+- "Desfaça a entrada"/"apague o gasto" removiam o único candidato do tipo nos 90 dias: tipo
+  sozinho não identifica alvo → zero mutação e "Qual entrada/gasto você quer remover?".
+- "O gasto de ontem era 40": a IA podia usar "ontem" só como data nova e editar o lançamento do
+  contexto; o dia ligado ao lançamento agora precisa estar nos critérios, senão `TARGET_UNCLEAR`.
+
+### Fixed — auditoria independente do patch de UPDATE/UNDO (REJECTED → corrigido)
+- "desfazer", "remove", "apaga" (e "cancela" sem pendência) sozinhos executavam
+  `undo_last_change`: agora não identificam nada → zero mutação + pedido de identificação, mesmo
+  com `last=true` (ou tipo/descrição inventados) pela IA. A pilha só com "desfaz a última
+  alteração/ação". "Último" exige o marcador no texto.
+- Descrição era descartada quando havia categoria/subcategoria; agora todos os critérios em
+  AND. `hints.py` lê também números (pt-BR), datas explícitas, itens do catálogo e membros; em
+  UPDATE e UNDO, critério citado e omitido/contradito pela IA → `TARGET_UNCLEAR`; o alvo
+  precisa de um critério comprovado pelo texto.
+- Nome de outro membro da família no texto bloqueia UPDATE/UNDO (`FORBIDDEN_OTHER_ACCOUNT`)
+  mesmo que a IA o omita ("apague a entrada de 77 da Maria" não apaga a da própria Alice).
+- Seleção do alvo acontecia antes do lock por usuário: agora `commit_plan` trava mensagem →
+  remetente (`lock_user`) e só então seleciona (`FOR UPDATE`), valida 0/1/N e executa no mesmo
+  atomic.
+- `PendingAction` (migration `whatsapp/0007`): vínculo com a mensagem do pedido, critérios
+  aprovados e impressão SHA-256 dos candidatos; confirmação recusa qualquer alteração (categoria,
+  descrição, data, troca de valores mantendo o total, soft delete). Só a mensagem seguinte ao
+  pedido pode confirmá-lo: qualquer mensagem intermediária (inclusive falha de IA, áudio/imagem
+  inválidos, ajuda) a invalida.
+- Correção contextual ligada à sequência de mensagens: só o efeito da mensagem imediatamente
+  anterior (ainda sendo a última alteração daquela transação); "não 100" confere o valor atual.
+- "Desculpa, foram 80", "Não, foram 80", "Foi 80, não 100" e mensagens só com valor logo após
+  um registro não criam lançamento (`CORRECTION_NOT_CREATED`).
+- Prompt `PROMPT_VERSION 2026-10-15.3`: exemplos de `UNDO` sem "desfazer = última ação".
+- `transactions.services.lock_user` público; `find_transactions(transaction_ids=, for_update=)`;
+  `families.selectors.other_member_names` inclui o username de quem não tem primeiro nome.
+
+### Fixed — integridade de UPDATE/UNDO e correções contextuais (beta fechada)
+- "Desfaça a entrada de 50", "desfaça a entrada do dia 07/10" e "desfaça todas as entradas"
+  removiam o lançamento mais recente (um gasto de R$ 34): `UNDO_TRANSACTION` ignorava qualquer
+  critério (`UndoPlan` sem referência → `undo_last_change`) e o prompt mandava `reference` só
+  em `UPDATE`. Agora `UNDO` com critérios remove exatamente o lançamento descrito (soft delete,
+  `DELETE` com `origin`), aplicando tipo, valor, `transaction_date`/período, categoria e
+  descrição nas transações do remetente: 0 → "não encontrei", 2+ → lista e pergunta.
+- "Último" só com marcador explícito no texto ("último gasto" = EXPENSE, "última entrada" =
+  INCOME); `UPDATE` sem critérios não cai mais no último lançamento.
+- "Errado, recebi somente 1.050,41" criava uma receita: correções (`correction` da IA ou
+  marcador no texto) nunca criam; sem critérios, editam só o lançamento recém-criado/editado
+  (TTL, sem consulta depois), senão perguntam "Qual lançamento você quer corrigir?".
+- Exclusão em massa exige confirmação: `PendingAction` (nova tabela, migration
+  `whatsapp/0006`) com os ids exatos, 10 min, "sim"/"não" sem chamada à IA; qualquer outra
+  mensagem cancela; conjunto alterado → nada removido. Edição em massa é recusada.
+- Defesa em profundidade: `whatsapp/hints.py` lê tipo/valor/data/"todos"/"último"/correção no
+  texto; critério citado mas omitido pela IA → pergunta, nunca busca mais ampla.
+- Contrato `v1.5.2` (`PROMPT_VERSION 2026-10-15.2`): `reference` também em `UNDO`, com
+  `start_date`/`end_date` e `all`; novo `correction` (boolean).
+- Domínio: `find_transactions` com período e `since` opcional; `summarize_own_transactions`
+  (soma no PostgreSQL); `last_change`; `soft_delete_transaction(origin=)` com lock do usuário e
+  `soft_delete_transactions` (tudo ou nada, só o dono).
+
+### Fixed — dono da transação ao citar membro da família (beta fechada)
+- "Curso da Ayumi, 300 reais" era recusado como se fosse um lançamento para a Ayumi: o prompt
+  mandava preencher `target_member_name` para qualquer pessoa citada e `actions.plan` recusava
+  todo `CREATE` com nome. Agora `CREATE` pertence sempre ao remetente; o nome fica na descrição.
+- Contrato `v1.5.1` (`PROMPT_VERSION 2026-10-15.1`): novo campo `for_another_person`
+  (boolean, só `CREATE`) separa pedido explícito de lançar para outra pessoa de mera menção;
+  em `CREATE`, `scope`/`target_member_name` são ignorados.
+- Defesa em profundidade: o Django recusa `CREATE` quando o texto lança explicitamente para outro
+  membro da família ("registra… para X", "conta da X", "X gastou…"), mesmo que a IA não sinalize.
+- Resposta `OWN_ACCOUNT_ONLY` orienta a reenviar como "paguei…" ou pedir que a pessoa registre.
+- Consultas (ADMIN sobre membro/família) e isolamento de MEMBER inalterados. Sem migration.
+
 ### Fixed — auditoria independente do hardening operacional
 - Recovery passa a detectar UPDATE/UNDO mesmo quando a chave de origem ocupa o limite persistido
   do campo de auditoria, evitando falso negativo de efeito financeiro.

@@ -184,27 +184,108 @@ reduções). Mantido por consistência com o `COMPARE`; mudar para comparação 
 | Criar | V1.0 | Ator vira dono (`user`). Idempotente por `idempotency_key`. Gera `TransactionChange(CREATE)`. |
 | Consultar | V1.0/V1.1 (próprias), V1.2 ✅ (família, ADMIN) | Via selector com `user=` remetente ou `scope=` autorizado (seção 6). |
 | Editar | V1.1 ✅ | `update_transaction`: só o dono, só transação ativa. Campos: valor, descrição, categoria, subcategoria, data. **Nunca**: dono, família, tipo, origem, ids. Revalida as regras da seção 3. Gera `UPDATE` com antes/depois. |
-| Desfazer | V1.1 ✅ | `undo_last_change`: ver abaixo. Gera `UNDO`. |
-| Soft delete | V1.0 | `deleted_at`; some de consultas e totais. Gera `DELETE`. Sem exclusão física pelo canal. |
+| Desfazer | V1.1 ✅ | `undo_last_change`, só quando o texto pede a última ação: ver abaixo. Gera `UNDO`. |
+| Soft delete | V1.0 | `deleted_at`; some de consultas e totais. Gera `DELETE`. Sem exclusão física pelo canal. Pelo canal: remoção do lançamento descrito (1 candidato) ou, com confirmação, de um conjunto (ver abaixo). |
 
-### Seleção do lançamento a editar (V1.1)
+### Seleção do lançamento a editar ou remover (V1.1; reforçada em 2026-10-15)
 
-A IA descreve a referência (`último`, tipo, categoria, subcategoria, descrição, valor, data);
-o Django busca **somente nas transações ativas do remetente**, com `transaction_date` nos
-últimos 90 dias (`find_transactions`):
+A IA descreve a referência (`último`, tipo, categoria, subcategoria, descrição, valor, data ou
+período, "todos"); o Django busca **somente nas transações ativas do remetente**
+(`find_transactions`) e aplica **todos** os critérios combinados por **E** (AND) — nunca
+descarta nem relaxa um filtro para achar alguma coisa (descrição é aplicada mesmo junto de
+categoria/subcategoria). Data citada é sempre `transaction_date` (nunca `created_at`). Sem
+data/período, a busca cobre `transaction_date` dos últimos 90 dias.
 
-- "último" ou referência sem critérios → a transação registrada mais recentemente (do tipo,
-  se informado);
-- com critérios → 0 resultados: "não encontrei"; 2 ou mais: pede valor/data e **não altera
-  nada**; exatamente 1: altera. Categoria/subcategoria na referência dispensam a descrição
-  livre (o item já está identificado pelo catálogo).
+- **Mutação sem alvo seguro → nada muda e o usuário é perguntado.** "desfazer", "remove",
+  "apaga", "cancela" sozinhos **não** identificam nada: zero mutação, resposta pedindo valor e
+  data (ou "desfaça o último lançamento"), qualquer que seja a proposta da IA.
+- Texto também é lido pelo Django (`whatsapp/hints.py`, defesa em profundidade, sem NLP
+  paralelo): tipo ("entrada"/"receita" × "gasto"), números, datas explícitas ("07/10", "dia 5",
+  "hoje", "ontem", "de outubro"...), categoria/subcategoria do catálogo (nomes e aliases
+  inequívocos), membro da família, "último", "todos" e marcadores de correção. Em `UPDATE` e
+  `UNDO`: critério citado no texto mas omitido ou contradito pela IA → pergunta
+  (`TARGET_UNCLEAR`), sem alterar nada. Em `UPDATE`, cada número/data/item citado precisa ser
+  critério **ou** valor novo. Critério de valor/data proposto pela IA sem aparecer no texto
+  também é recusado. O alvo precisa de pelo menos um critério **comprovado pelo texto** (ou
+  "último"); critérios apenas inferidos pela IA podem restringir, nunca bastam sozinhos.
+- Texto que cita **outro membro da família** ("apague a entrada de 77 da Maria") bloqueia
+  qualquer edição/remoção (`FORBIDDEN_OTHER_ACCOUNT`), mesmo que a IA omita o nome — inclusive
+  para o ADMIN. Consultas familiares não mudam.
+- 0 resultados: "Não encontrei uma entrada de R$ 50,00 em 07/10." — nada muda.
+- 1 resultado: a operação individual prossegue.
+- 2 ou mais: lista até 3 candidatos e pergunta qual; **nada muda**. Nunca escolhe o primeiro,
+  o mais recente nem desempata arbitrariamente.
+- "Último" (só quando **o texto** diz "último/última", "acabei de", "mais recente", "agora há
+  pouco"): a transação registrada mais recentemente (`created_at`), do tipo citado ("último
+  gasto" = EXPENSE, "última entrada" = INCOME, "último lançamento" = ambos). `last=true` da IA
+  sem o marcador no texto é ignorado. "Desfaça a entrada" **não** é "o último lançamento".
+- **Tipo sozinho não identifica alvo de remoção**: "desfaça a entrada", "apague o gasto" →
+  zero mutação e "Qual entrada/gasto você quer remover?", mesmo com um único candidato. Tipo +
+  valor ("a entrada de 50"), tipo + data ("a entrada de ontem") ou "último" explícito + tipo
+  ("a última entrada") podem resolver (0/1/N continua valendo).
+- **Ordem explícita de remover/editar nunca vira lançamento novo**: verbos inequívocos no
+  texto ("remover", "apagar", "excluir", "deletar", "desfazer"; "cancelar", "tirar",
+  "retirar", "estornar" só seguidos de lançamento/gasto/despesa/entrada/receita/registro/transação
+  — "tira-gosto", "retirei 200 no caixa" não contam;
+  "editar", "alterar", "mudar/trocar o valor/data/categoria") + proposta `CREATE` da IA →
+  nada é criado (`TARGET_UNCLEAR` / `CORRECTION_NOT_CREATED`).
+- **Data que identifica o lançamento é critério**: em "o gasto de ontem era 40" o dia ligado ao
+  lançamento ("gasto/entrada/o ... de ontem", "do dia 07/10") precisa constar nos critérios do
+  alvo; se a IA o usar só como data nova → `TARGET_UNCLEAR`, nada muda. Com cópula ("o gasto de
+  30 era de ontem") a data é valor novo.
+- Seleção e execução são serializadas por usuário: no commit da mensagem o Django trava a
+  linha da mensagem e a do remetente, revalida pendência/contexto, seleciona os candidatos com
+  `SELECT … FOR UPDATE`, valida 0/1/N e executa — tudo no mesmo `transaction.atomic()`.
+- Remoção individual = soft delete (`soft_delete_transaction`, gera `DELETE` com `origin`).
+- Vários de propósito ("apague todas as entradas de outubro"): o Django resolve o conjunto
+  (máx. 50), responde quantidade e total e grava uma `PendingAction` (10 min) com os ids
+  exatos, os critérios aprovados e uma impressão (SHA-256) dos campos de cada candidato (dono,
+  tipo, valor, categoria, subcategoria, descrição, data). Só um "sim" (mensagem inteira) que
+  seja **a mensagem seguinte** do remetente ao pedido executa — `soft_delete_transactions`, tudo
+  ou nada, revalidando ids, dono, estado, impressão, critérios e total; qualquer diferença (até
+  valores trocados entre dois itens mantendo o total) → nada é removido ("os lançamentos
+  mudaram"). "Não", expiração ou **qualquer outra mensagem autenticada do remetente** (inclusive
+  uma que falhou: IA fora do ar, áudio/imagem inválidos, ajuda, não entendida) invalida a
+  pendência no momento em que é recebida. "Sim" sem pendência válida não faz nada. Edição em
+  massa não é suportada.
+- Correção ("errado, foram 80", "desculpa, foram 80", "não, foram 80", "foi 80, não 100"):
+  **nunca cria** transação. Sem critérios, edita só o efeito da **mensagem imediatamente
+  anterior** do remetente: ela precisa ter criado/editado um lançamento (PROCESSED, dentro do TTL
+  do contexto), cuja última alteração ainda seja a daquela mensagem (não desfeita nem editada
+  depois), ativo e do mesmo tipo citado; o valor novo precisa estar no texto e um segundo valor
+  ("não 100") precisa ser o valor atual. Qualquer mensagem no meio (ajuda, consulta, falha,
+  mídia inválida, outro pedido) quebra o vínculo → "Qual lançamento você quer corrigir?".
+- Mensagem elíptica (só um valor, "80", "ok, 80") depois de um registro/edição **recente**
+  (dentro do TTL do contexto) não vira lançamento novo (`CORRECTION_NOT_CREATED`, pergunta qual
+  lançamento corrigir) — também quando o vínculo foi interrompido por outra mensagem (ajuda,
+  consulta, falha de IA, mídia inválida): interrompido significa "não sabemos qual corrigir",
+  não "criar". Sem mutação recente (ou após o TTL), segue o fluxo normal.
+- **Datas do texto são valores** (`hints.temporal`, auditoria final P1#1): hoje/ontem/
+  anteontem, dd/mm (ocorrência mais recente ≤ hoje), dd/mm/aaaa, "dia N" (regra da §4),
+  "N de <mês> [de aaaa]", mês por extenso (mês mais recente já iniciado) ou "<mês> de aaaa",
+  dia da semana sem qualificação (ocorrência mais recente ≤ hoje; "segunda" solta só com
+  "na/de/do..."), esse/este mês, mês passado, essa semana / semana passada (intervalo que
+  cobre as convenções seg–dom e dom–sáb), esse ano / ano passado. Em UPDATE/UNDO o alvo da IA
+  precisa caber em uma dessas datas/períodos, cada data do texto precisa ser o alvo ou a data
+  nova, e a data ligada ao lançamento ("a entrada do dia 5") precisa ser o alvo. Expressão de
+  data não resolvível com segurança ("sexta passada", "dia 45", "31/02", "todo mês") →
+  `TARGET_UNCLEAR`, zero mutação.
+- **UPDATE só seleciona por critério do texto** (auditoria final P1#2): exige "último" ou um
+  critério além do tipo comprovado pelo texto **como alvo** (valor escrito que não seja só o
+  valor novo, data compatível, item do catálogo citado que não seja só a categoria nova,
+  palavra descritiva da descrição presente no texto e diferente da descrição nova). Critério
+  só proposto pela IA nunca é o motivo da seleção; com "último", um filtro extra não
+  comprovado → `TARGET_UNCLEAR`. Tipo sozinho segue apenas o caminho contextual seguro.
 
-### Política de desfazer (V1.1)
+### Política de desfazer (V1.1; revista em 2026-10-15)
 
-- "desfazer" desfaz a **última ação reversível ainda não desfeita do próprio usuário**:
-  `CREATE` (→ soft delete) ou `UPDATE` (→ restaura os valores anteriores exatos).
-- É uma pilha: criar 10 → mudar para 15 → desfazer (volta a 10) → desfazer (remove o registro)
-  → desfazer ("nada para desfazer").
+- Desfazer a **última ação** (pilha) só quando o texto diz isso explicitamente: "desfaz a
+  última alteração/ação/edição". Desfaz a última ação reversível ainda não desfeita do próprio
+  usuário: `CREATE` (→ soft delete) ou `UPDATE` (→ restaura os valores anteriores exatos).
+  "desfazer" sozinho **não** desfaz nada (pede identificação). Com tipo, valor, data,
+  categoria, "último" ou "todos", vale a seleção acima.
+- É uma pilha: criar 10 → mudar para 15 → "desfaz a última alteração" (volta a 10) → "desfaz a
+  última alteração" (remove o registro) → idem ("nada para desfazer").
 - `UNDO` e `DELETE` não são reversíveis; não há redo. Cada ação só pode ser desfeita uma vez
   (unicidade no banco). Ações de transações já excluídas são puladas.
 - Transações criadas antes da V1.1 não têm registro de criação e não são desfeitas.
@@ -256,6 +337,10 @@ Peças (V1.2):
 - `transactions.policies.can_modify_transaction(actor, transaction)`: só o dono. Usada por
   `update_transaction`, `undo_last_change` e `soft_delete_transaction`. Não existem services de
   criação/edição/exclusão/desfazer em nome de terceiros.
+- Criação pelo canal: o dono é **sempre** o remetente. Nome de membro citado na mensagem ("curso da
+  Ana", "presente pra Ana") é beneficiário/descrição, nunca dono. Pedido explícito de lançar para
+  outra pessoa ("registra 100 para a Ana", "Ana gastou 100") é recusado, não gravado para ninguém
+  (`AI_CONTRACT.md §5`, item 2).
 - Papel é revalidado a cada mensagem; contexto conversacional guarda semântica, nunca permissão.
 
 Respostas de negação são locais e discretas (`whatsapp/messages.py`): "Essa consulta está

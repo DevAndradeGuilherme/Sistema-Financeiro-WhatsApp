@@ -24,7 +24,7 @@ from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
 
-from apps.ai.contract import ReceiptExtraction
+from apps.ai.contract import ReceiptExtraction, TransactionReference
 from apps.ai.service import AIError
 from apps.ai.vision import VisionResult
 from apps.transactions.models import Transaction, TransactionChange
@@ -293,8 +293,8 @@ def test_undo_by_text_soft_deletes_but_keeps_receipt(
     client, alice, catalog, ai, evolution, download, vision
 ):
     post_image(client)
-    ai.set(interp(intent="UNDO_TRANSACTION"))
-    deliver(client, "desfazer", "T1")
+    ai.set(interp(intent="UNDO_TRANSACTION", reference=TransactionReference(last=True)))
+    deliver(client, "desfaça o último lançamento", "T1")
     txn = Transaction.objects.get()
     assert txn.deleted_at is not None
     attachment = ReceiptAttachment.objects.get()

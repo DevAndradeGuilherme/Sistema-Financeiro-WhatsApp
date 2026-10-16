@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ConversationContext, InboundMessage, ReceiptAttachment
+from .models import ConversationContext, InboundMessage, PendingAction, ReceiptAttachment
 
 
 @admin.register(InboundMessage)
@@ -102,6 +102,25 @@ class ConversationContextAdmin(admin.ModelAdmin):
     search_fields = ("user__username",)
     list_select_related = ("user",)
     readonly_fields = [field.name for field in ConversationContext._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(PendingAction)
+class PendingActionAdmin(admin.ModelAdmin):
+    """Read-only: confirmations are only given by the sender, through the channel."""
+
+    list_display = ("user", "action", "count", "expires_at", "created_at")
+    search_fields = ("user__username",)
+    list_select_related = ("user",)
+    readonly_fields = [field.name for field in PendingAction._meta.fields]
 
     def has_add_permission(self, request):
         return False

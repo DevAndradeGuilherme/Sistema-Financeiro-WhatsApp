@@ -23,6 +23,10 @@ VALID = {
     # v1.2 fields
     "scope": None,
     "target_member_name": None,
+    # v1.5.1
+    "for_another_person": False,
+    # v1.5.2
+    "correction": False,
     # v1.5 fields
     "months": None,
     "trend_metric": None,
@@ -70,11 +74,20 @@ def test_parse_valid_output():
         {"subcategory_id": 1.5},
         {"query_kind": "AVERAGE"},
         {"description": 123},
+        {"for_another_person": None},
+        {"for_another_person": "true"},
     ],
 )
 def test_invalid_values_rejected(change):
     with pytest.raises(InvalidOutput):
         parse_output({**VALID, **change})
+
+
+def test_for_another_person_is_a_plain_flag():
+    """v1.5.1: a boolean hint Django can only use to refuse, never an owner/user field."""
+    assert OUTPUT_SCHEMA["properties"]["for_another_person"] == {"type": "boolean"}
+    assert parse_output(VALID).for_another_person is False
+    assert parse_output({**VALID, "for_another_person": True}).for_another_person is True
 
 
 def test_extra_or_missing_fields_rejected():
@@ -102,6 +115,9 @@ REFERENCE = {
     "description": "gasolina",
     "amount": None,
     "transaction_date": None,
+    "start_date": None,  # v1.5.2
+    "end_date": None,  # v1.5.2
+    "all": False,  # v1.5.2
 }
 UPDATES = {
     "amount": "15.00",
@@ -155,3 +171,23 @@ def test_follow_up_must_be_boolean(value):
     else:
         with pytest.raises(InvalidOutput):
             parse_output({**VALID, "follow_up": value})
+
+
+def test_v152_reference_period_all_and_correction():
+    """v1.5.2: UNDO may carry a reference (period, "all"); correction is a plain flag."""
+    from apps.ai.contract import REFERENCE_SCHEMA
+
+    assert REFERENCE_SCHEMA["properties"]["all"] == {"type": "boolean"}
+    assert OUTPUT_SCHEMA["properties"]["correction"] == {"type": "boolean"}
+    reference = {**REFERENCE, "all": True, "start_date": "2026-10-01", "end_date": "2026-10-31"}
+    result = parse_output(
+        {**VALID, "intent": "UNDO_TRANSACTION", "reference": reference, "correction": True}
+    )
+    assert result.reference.all is True
+    assert (result.reference.start_date, result.reference.end_date) == ("2026-10-01", "2026-10-31")
+    assert result.correction is True
+    for bad in ({**REFERENCE, "all": None}, {**REFERENCE, "all": "true"}):
+        with pytest.raises(InvalidOutput):
+            parse_output({**VALID, "reference": bad})
+    with pytest.raises(InvalidOutput):
+        parse_output({**VALID, "correction": None})

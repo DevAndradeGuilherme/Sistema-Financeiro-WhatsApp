@@ -171,8 +171,9 @@ def test_ambiguous_reference_changes_nothing(
     record.refresh_from_db()
     assert record.error_code == "AMBIGUOUS_REFERENCE"
     reply = last_reply(evolution)
-    assert reply.startswith("Encontrei mais de um gasto parecido com gasolina.")
-    assert "valor ou a data" in reply
+    assert reply.startswith("Encontrei mais de uma transação correspondente. Qual delas")
+    assert "Gasto de R$ 40,00" in reply and "Gasto de R$ 60,00" in reply
+    assert "o valor, a data ou a descrição" in reply
     assert not TransactionChange.objects.filter(action=Action.UPDATE).exists()
 
 
@@ -192,7 +193,7 @@ def test_invalid_updates_change_nothing(client, alice, catalog, ai, evolution, u
     ai.set(gas_proposal(catalog))
     deliver(client, "10 reais de gasolina", "M1")
     ai.set(update(LAST, **updates))
-    record = deliver(client, "muda", "M2")
+    record = deliver(client, "muda o último gasto", "M2")
     record.refresh_from_db()
     assert record.error_code == code
     assert Transaction.objects.get().amount == Decimal("10.00")
@@ -290,7 +291,7 @@ def test_create_update_undo_undo(client, alice, catalog, ai, evolution):
     txn = Transaction.objects.get()
 
     ai.set(UNDO)
-    record = deliver(client, "desfazer", "M3")
+    record = deliver(client, "desfaz a última alteração", "M3")
     txn.refresh_from_db()
     assert (txn.amount, txn.deleted_at) == (Decimal("10.00"), None)
     assert last_reply(evolution) == (
@@ -300,14 +301,14 @@ def test_create_update_undo_undo(client, alice, catalog, ai, evolution):
     record.refresh_from_db()
     assert (record.intent, record.transaction) == ("UNDO_TRANSACTION", txn)
 
-    deliver(client, "desfazer", "M4")
+    deliver(client, "desfaz a última alteração", "M4")
     txn.refresh_from_db()
     assert txn.deleted_at is not None
     assert last_reply(evolution) == (
         "Pronto, removi o último lançamento (R$ 10,00 em Transporte · Combustível)."
     )
 
-    record = deliver(client, "desfazer", "M5")
+    record = deliver(client, "desfaz a última alteração", "M5")
     record.refresh_from_db()
     assert record.error_code == "NOTHING_TO_UNDO"
     assert last_reply(evolution) == "Não encontrei nenhuma ação recente para desfazer."
@@ -315,12 +316,12 @@ def test_create_update_undo_undo(client, alice, catalog, ai, evolution):
 
 def test_undo_duplicate_delivery_undoes_once(client, alice, catalog, ai, evolution):
     ai.set(gas_proposal(catalog, "1"))
-    deliver(client, "1 real", "M1")
+    deliver(client, "1 real de gasolina", "M1")
     ai.set(gas_proposal(catalog, "2"))
-    deliver(client, "2 reais", "M2")
+    deliver(client, "2 reais de gasolina", "M2")
     ai.set(UNDO)
-    deliver(client, "desfazer", "M3")
-    deliver(client, "desfazer", "M3")  # redelivery
+    deliver(client, "desfaz a última alteração", "M3")
+    deliver(client, "desfaz a última alteração", "M3")  # redelivery
     assert Transaction.objects.active().count() == 1
     assert TransactionChange.objects.filter(action=Action.UNDO).count() == 1
 
@@ -330,8 +331,8 @@ def test_undo_reply_failure_does_not_repeat(client, alice, catalog, ai, evolutio
     deliver(client, "10 reais", "M1")
     ai.set(UNDO)
     evolution.side_effect = EvolutionHTTPError(500, "down")
-    record = deliver(client, "desfazer", "M2")
-    deliver(client, "desfazer", "M2")
+    record = deliver(client, "desfaz a última alteração", "M2")
+    deliver(client, "desfaz a última alteração", "M2")
     record.refresh_from_db()
     assert (record.status, record.error_code) == (Status.PROCESSED, "REPLY_SEND_FAILED")
     assert TransactionChange.objects.filter(action=Action.UNDO).count() == 1
@@ -396,7 +397,8 @@ def test_cannot_undo_other_users_action(
     theirs.refresh_from_db()
     assert theirs.deleted_at is None
     record.refresh_from_db()
-    assert record.error_code == "NOTHING_TO_UNDO"
+    # "gasto" alone identifies nothing (and only the sender's own data is ever searched).
+    assert record.error_code == "TARGET_UNCLEAR"
 
 
 def test_model_cannot_supply_transaction_id():
@@ -424,11 +426,16 @@ def test_model_cannot_supply_transaction_id():
             "description": None,
             "amount": None,
             "transaction_date": None,
+            "start_date": None,  # v1.5.2
+            "end_date": None,  # v1.5.2
+            "all": False,  # v1.5.2
             "transaction_id": "abc",
         },
         "updates": None,
         "scope": None,  # v1.2
         "target_member_name": None,  # v1.2
+        "for_another_person": False,  # v1.5.1
+        "correction": False,  # v1.5.2
         "months": None,  # v1.5
         "trend_metric": None,  # v1.5
         "trend_direction": None,  # v1.5
@@ -810,9 +817,11 @@ def test_unknown_period_dates_rejected(client, alice, catalog, ai, evolution):
     assert record.error_code == "INVALID_DATE"
 
 
-def test_catalog_reference_ignores_free_text_description(
+def test_catalog_reference_keeps_the_description_criterion(
     client, alice, catalog, ai, evolution, make_transaction
 ):
+    """Audit P1#2: category/subcategory never replace the description — both are applied (AND).
+    The only fuel expense is described "posto shell", not "gasolina" → not found, unchanged."""
     txn = make_transaction(
         user=alice,
         category=catalog["transporte"],
@@ -827,6 +836,8 @@ def test_catalog_reference_ignores_free_text_description(
             amount="20",
         )
     )
-    deliver(client, "aquele gasto de gasolina era 20 reais")
+    record = deliver(client, "aquele gasto de gasolina era 20 reais")
     txn.refresh_from_db()
-    assert txn.amount == Decimal("20.00")
+    assert txn.amount == Decimal("30.00")
+    record.refresh_from_db()
+    assert record.error_code == "NOT_FOUND"

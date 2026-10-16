@@ -119,6 +119,12 @@ Ordem: autenticar → parsear → **reservar** → classificar → pipeline.
 - Reserva = `INSERT` em `InboundMessage` com `UNIQUE (provider, instance, provider_message_id)`,
   dentro de `transaction.atomic()`. Requisições concorrentes: o banco aceita uma; a outra recebe
   `IntegrityError` e é tratada como duplicata. Não há `if exists` como proteção.
+- A reserva já grava `user`/`sender_phone` do remetente cadastrado (mensagem direta: não
+  fromMe, não grupo, não broadcast), no mesmo `INSERT`, travando a linha do usuário como
+  `lock_user`. É identidade de **ordenação** (pendência, contexto de correção), não
+  autorização: a classificação continua decidindo `READY`/`IGNORED` (inativo → ignorado;
+  número desconhecido fica sem `user`). Assim nenhuma mensagem reservada fica invisível para a
+  sequência enquanto ainda não foi classificada (auditoria final, P1#3).
 - A chave inclui `provider` e `instance` porque o id do WhatsApp só é único dentro da conta.
 - Duplicatas retornam antes de qualquer efeito (pipeline, envio de mensagem).
 - Segunda camada: `Transaction.idempotency_key = "whatsapp:<instance>:<id>"` (`UNIQUE`).
@@ -127,10 +133,20 @@ Pipeline (`pipeline.handle_ready_message`), sem transação aberta durante HTTP:
 
 1. Mensagem não `READY` → nada é feito (nunca vai para a IA).
 2. Contexto + **uma** chamada OpenAI. Falha → `FAILED` (`AI_<código>`), resposta genérica.
-3. `actions.plan`: validação Django da proposta (leitura apenas).
+   Exceção (2026-10-15): mensagem inteira "sim"/"não" (`pending.decision`) **não** chama a IA;
+   vira `AnswerPlan` (intent `CONFIRM_ACTION`) e só responde à `PendingAction` do remetente,
+   e só se for a mensagem **seguinte** à do pedido: qualquer `InboundMessage` do remetente
+   reservada no meio (mesmo falha de IA, áudio/imagem inválidos, mensagem ignorada) a invalida.
+3. `actions.plan`: validação Django da proposta (leitura apenas; produz **critérios**
+   validados, nunca o id da transação a alterar).
 4. `transaction.atomic()`: `select_for_update` da mensagem; se não estiver mais `READY`, para;
-   executa (`create_transaction` / `update_transaction` / `undo_last_change` / selectors),
-   grava o contexto da consulta e `PROCESSED` + `intent` + `transaction` (afetada).
+   trava a linha do remetente (`transactions.services.lock_user`, serializa todas as mensagens
+   do mesmo usuário); revalida pendência/contexto pela sequência de `InboundMessage`; seleciona
+   os candidatos (`find_transactions(..., for_update=True)`), valida 0/1/N e executa
+   (`create_transaction` / `update_transaction` / `undo_last_change` /
+   `soft_delete_transaction(s)` / selectors), cancela a `PendingAction` anterior (qualquer
+   mensagem que não seja a resposta) e grava o contexto da consulta e `PROCESSED` + `intent` +
+   `transaction` (afetada).
    Efeito e status commitam juntos; qualquer exceção desfaz ambos → `FAILED` (`PIPELINE_ERROR`).
 5. Resposta enviada **depois** do commit. Falha no envio → continua `PROCESSED`, `error_code =
    REPLY_SEND_FAILED`; nada é reexecutado (reentrega = duplicata; status ≠ READY).
@@ -274,7 +290,8 @@ webhook (imageMessage de usuário ativo) → reserva (RECEIVED)
 ```
 
 - **Registro direto, sem etapa de confirmação**: só cria quando tudo é inequívoco (documento
-  financeiro, direção, valor, BRL, data); o usuário pode desfazer com "desfazer". Casos incertos
+  financeiro, direção, valor, BRL, data); o usuário pode desfazer com "desfaça o último
+  lançamento". Casos incertos
   respondem pedindo o dado em texto (sem conversa multimodal).
 - **Sem data impressa** → data de recebimento da mensagem no fuso de negócio; data ilegível/
   inválida → não registra; data futura → recusada pelo service.

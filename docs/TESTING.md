@@ -148,6 +148,34 @@ tests/fixtures/        payloads Evolution anonimizados, respostas de IA fixas
 - Smoke test real (manual, fora da suíte): chamar `apps.ai.service.interpret_message` com o
   contexto real, sem persistir, e conferir intenção/valor/categoria/datas e tokens.
 
+- Integridade de UPDATE/UNDO (beta, 2026-10-15): `apps/whatsapp/tests/test_mutation_targets.py`
+  (remoção por tipo/valor/`transaction_date`, 0/1/N candidatos, "último" explícito, critérios
+  omitidos pela IA, correção contextual × CREATE, confirmação em massa com expiração/cancelamento/
+  substituição/conjunto alterado, MEMBER/ADMIN, idempotência, áudio e a sequência real da beta),
+  `apps/whatsapp/tests/test_hints.py` (leitura do texto e "sim"/"não") e
+  `apps/transactions/tests/test_targets.py` (filtros/período, soma no banco, soft delete em lote
+  tudo-ou-nada, `last_change`).
+- Guards de intenção (2026-10-15): `apps/whatsapp/tests/test_mutation_intent_guards.py`
+  (remoção/edição explícita proposta como CREATE, tipo sozinho em UNDO, data de referência em
+  UPDATE usada só como valor novo, CREATE normal preservado).
+- Auditoria independente (2026-10-15): `apps/whatsapp/tests/test_audit_mutations.py` (os 43
+  casos: "desfazer"/"remove"/"apaga"/"cancela" sem efeito, `last` malicioso, AND de categoria +
+  descrição + valor, critérios omitidos/contraditos em UPDATE/UNDO, nome de membro no texto,
+  impressão da `PendingAction` — categoria/descrição/data/troca de valores/soft delete —,
+  invalidação por qualquer mensagem intermediária — IA fora, ajuda, não entendida, áudio e
+  imagem inválidos —, correção ligada à mensagem anterior, frases corretivas e elípticas,
+  idempotência) e `apps/whatsapp/tests/test_mutation_concurrency.py` (PostgreSQL real, threads:
+  confirmações simultâneas, confirmação × edição, dois UPDATE/DELETE do mesmo alvo
+  interpretados antes de qualquer commit, dois pedidos em massa, confirmação duplicada).
+- Auditoria final (2026-10-16): `apps/whatsapp/tests/test_final_audit_p1.py` (datas do texto
+  comparadas por valor — dia N, mês, mês+ano, dd/mm, hoje/ontem/anteontem, não resolvíveis —;
+  filtros de UPDATE inventados pela IA — valor, data, período, categoria, subcategoria,
+  descrição antiga ou igual à nova, "último" + filtro extra —; "80"/"ok, 80" após mutação
+  recente interrompida por ajuda, desconhecida, consulta, falha de IA, áudio e imagem
+  inválidos) e `apps/whatsapp/tests/test_reserve_ordering_concurrency.py` (PostgreSQL real,
+  threads: mensagem reservada e pausada entre reserva e classificação não fica invisível para
+  "sim" nem para a correção "80"; remetente desconhecido e eco fromMe não entram na ordem).
+
 ### Soft delete
 - Transação desfeita não aparece em consultas nem totais.
 

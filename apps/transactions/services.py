@@ -271,20 +271,38 @@ def undo_last_change(*, user: User, origin: str = "") -> UndoResult | None:
     return UndoResult(undo=undo, reverted=target, transaction=txn)
 
 
-def soft_delete_transaction(*, actor: User, transaction_id) -> Transaction:
+def soft_delete_transaction(*, actor: User, transaction_id, origin: str = "") -> Transaction:
     """Soft delete a transaction. Only the owner may do it (Family ADMIN cannot)."""
+    return soft_delete_transactions(actor=actor, transaction_ids=[transaction_id], origin=origin)[0]
+
+
+def soft_delete_transactions(
+    *, actor: User, transaction_ids, origin: str = ""
+) -> list[Transaction]:
+    """Soft delete exactly these transactions, all or nothing. Owner only (ADMIN cannot).
+
+    If any id is missing, already deleted or not the actor's, nothing is deleted. Each
+    deletion is recorded as ``DELETE`` (not reversible: no redo).
+    """
+    ids = list(dict.fromkeys(transaction_ids))
+    if not ids:
+        raise ValidationError({"transaction": "Nenhuma transação informada."})
     with transaction.atomic():
-        instance = (
-            Transaction.objects.select_for_update().active().filter(pk=transaction_id).first()
+        _lock_user(actor)
+        instances = list(
+            Transaction.objects.select_for_update().active().filter(pk__in=ids).order_by("pk")
         )
-        if instance is None or not can_modify_transaction(actor=actor, transaction=instance):
+        if len(instances) != len(ids) or not all(
+            can_modify_transaction(actor=actor, transaction=instance) for instance in instances
+        ):
             # Same error whether it does not exist or belongs to someone else.
             raise PermissionDenied("Transação não encontrada.")
-        before = snapshot(instance)
-        instance.mark_deleted()
-        instance.save(update_fields=["deleted_at", "updated_at"])
-        _record(instance, actor, Action.DELETE, before=before)
-    return instance
+        for instance in instances:
+            before = snapshot(instance)
+            instance.mark_deleted()
+            instance.save(update_fields=["deleted_at", "updated_at"])
+            _record(instance, actor, Action.DELETE, before=before, origin=origin)
+    return instances
 
 
 # --- Helpers -------------------------------------------------------------------------------
@@ -339,9 +357,19 @@ def _restore(txn: Transaction, data: dict) -> None:
     txn.transaction_date = date.fromisoformat(data["transaction_date"])
 
 
-def _lock_user(user: User) -> None:
-    # FOR NO KEY UPDATE: serializes this user's mutations without blocking FK inserts.
+def lock_user(user: User) -> None:
+    """Serialize this user's mutations until the end of the caller's atomic block.
+
+    Row lock on the user (``FOR NO KEY UPDATE``: does not block FK inserts). Re-entrant in the
+    same database transaction. Callers that *choose* a target before mutating it (the WhatsApp
+    pipeline) take it first, so selection and effect see the same state.
+    """
+    if not transaction.get_connection().in_atomic_block:
+        raise RuntimeError("lock_user must run inside transaction.atomic().")
     User.objects.select_for_update(no_key=True).filter(pk=user.pk).first()
+
+
+_lock_user = lock_user
 
 
 def _record(

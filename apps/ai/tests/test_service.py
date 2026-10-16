@@ -49,6 +49,10 @@ OUTPUT = {
     # v1.2 fields
     "scope": None,
     "target_member_name": None,
+    # v1.5.1
+    "for_another_person": False,
+    # v1.5.2
+    "correction": False,
     # v1.5 fields
     "months": None,
     "trend_metric": None,
@@ -128,7 +132,8 @@ def test_instructions_contain_date_timezone_and_catalog_only():
     assert "America/Sao_Paulo" in text
     assert "category 2: Transporte [EXPENSE] (carro)" in text
     assert "subcategory 1: Combustível (gasolina)" in text
-    assert len(text) < 3000  # keep the per-message prompt small
+    # keep the per-message prompt small (v1.5.1: +for_another_person; v1.5.2: +UPDATE/UNDO targets)
+    assert len(text) < 3900
 
 
 @pytest.mark.parametrize("setting", ["OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_TIMEOUT_SECONDS"])

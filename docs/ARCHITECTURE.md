@@ -90,8 +90,10 @@ Evolution ──POST──> /webhooks/evolution/<...>   (whatsapp)
   7. whatsapp.actions.plan: validação Django (Decimal, datas ISO, ids do catálogo, fallback).
   8. atomic[ lock da InboundMessage (READY?) → efeito → status PROCESSED ]:
        CREATE_TRANSACTION  → transactions.services.create_transaction(user=remetente, ...)
+       (lock da mensagem → lock do remetente → seleção FOR UPDATE → efeito, no mesmo atomic)
        UPDATE_TRANSACTION  → selectors.find_transactions (só do remetente) → services.update_transaction
-       UNDO_TRANSACTION    → services.undo_last_change(user=remetente)
+       UNDO_TRANSACTION    → find_transactions → soft_delete_transaction(s) (lote: PendingAction);
+                             "desfaz a última alteração" → services.undo_last_change
        QUERY_TRANSACTIONS  → transactions.scopes.resolve (autoriza) → selectors.*(scope=) (SQL)
                              + ConversationContext.remember
        HELP / UNKNOWN      → resposta fixa
@@ -229,3 +231,21 @@ Formato: `AAAA-MM-DD — decisão — motivo`. Adicionar novas decisões no fim.
 - 2026-10-09 — Gunicorn 23.0.0 → 26.2.0 (23.x sem suporte de segurança upstream; 26 é série
   suportada, Python ≥ 3.10, sem dependências de runtime) e `--no-control-socket` — interface
   de controle não usada; `packaging` passa a ser fixado só em `requirements-dev.txt` (pytest).
+- 2026-10-15 — Seleção de alvo de UPDATE/UNDO determinística no Django (todos os critérios da
+  `reference`, mais leitura do texto em `whatsapp/hints.py` como defesa em profundidade; 0/1/N
+  candidatos; "último" só com marcador explícito) e correção contextual derivada do ledger
+  `TransactionChange` + TTL, sem enviar dados de transações à IA — a IA omitia critérios e o
+  `UNDO` caía na última ação (bug da beta).
+- 2026-10-15 — Confirmação de exclusão em massa em `whatsapp.PendingAction` (PostgreSQL, uma
+  linha por usuário, 10 min, ids exatos, cancelada por qualquer outra mensagem); "sim"/"não"
+  detectados localmente, sem chamada à IA — sem Redis/Celery, mesmo atomic do pipeline.
+- 2026-10-15 — Revisão após auditoria independente (REJECTED): (1) seleção do alvo movida do
+  planejamento para a execução, sob o lock da linha do remetente (`lock_user`, `FOR NO KEY
+  UPDATE`) tomado no commit de **toda** mensagem, com candidatos em `FOR UPDATE` — serializa
+  seleção e efeito sem Redis/Celery nem mutex em memória; (2) estado conversacional ancorado na
+  **sequência de `InboundMessage`** do remetente (pk, reservada no webhook): pendência só vale
+  para a mensagem seguinte ao pedido e correção implícita só alcança o efeito da mensagem
+  imediatamente anterior — invalida no instante da reserva, sem depender de cada caminho de
+  falha (IA, áudio, imagem) limpar estado; (3) `PendingAction` guarda impressão SHA-256 dos
+  candidatos e os critérios aprovados (migration `0007`); (4) "desfazer" sozinho deixa de ser
+  `undo_last_change`; (5) texto que cita outro membro bloqueia qualquer mutação.
